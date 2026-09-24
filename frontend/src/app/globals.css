@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Always-dark neon terminal theme. Monospace everywhere, dense panels. */
+:root {
+  --bg: #04060b;
+  --panel: #080c14;
+  --line: #172033;
+  --cyan: #37d6ff;
+  --green: #2ee66b;
+  --red: #ff4d5e;
+  --yellow: #f5c518;
+}
+
+html, body {
+  background: var(--bg);
+  color: #e6edf7;
+  font-family: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+}
+body {
+  background-image:
+    radial-gradient(1200px 600px at 50% -10%, rgba(55, 214, 255, 0.07), transparent 60%),
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: auto, 24px 24px, 24px 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(55, 214, 255, 0.03);
+}
+.panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #cfe3f5;
+}
+.panel-sub {
+  margin-top: 1px;
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5d6b82;
+}
+.glow-green { text-shadow: 0 0 18px rgba(46, 230, 107, 0.55); }
+.glow-red { text-shadow: 0 0 18px rgba(255, 77, 94, 0.5); }
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee { animation: marquee 70s linear infinite; }
+@keyframes pulse-dot { 50% { opacity: 0.3; } }
+.live-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee, .live-dot { animation: none; }
+}

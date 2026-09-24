@@ -1,0 +1,19 @@
+# Real financial data never gets committed — code only.
+config/portfolio.json
+
+# Python
+backend/venv
+backend/data/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.env
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+
+# OS/editor
+.DS_Store

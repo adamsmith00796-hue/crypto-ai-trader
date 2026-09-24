@@ -1,0 +1,32 @@
+{
+  "holdings": [
+    {
+      "label": "MetaMask - Account 1",
+      "source": "wallet:ethereum",
+      "symbol": "ETH",
+      "coingecko_id": "ethereum",
+      "quantity": 0.5
+    },
+    {
+      "label": "MetaMask - Account 1",
+      "source": "wallet:ethereum",
+      "symbol": "RETH",
+      "coingecko_id": "rocket-pool-eth",
+      "quantity": 0.076
+    },
+    {
+      "label": "CoinSpot",
+      "source": "exchange:coinspot",
+      "symbol": "BTC",
+      "coingecko_id": "bitcoin",
+      "quantity": 0.1
+    },
+    {
+      "label": "Swyftx",
+      "source": "exchange:swyftx",
+      "symbol": "SOL",
+      "coingecko_id": "solana",
+      "quantity": 2
+    }
+  ]
+}
