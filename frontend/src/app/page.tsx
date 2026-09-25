@@ -1,71 +1,32 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { api, type HoldingNews, type MarketCoin, type Portfolio, type Sentiment } from "@/lib/api";
-import { GREEN, RED, YELLOW, usd, breadthWave, pct, price, returns, timeAgo, tone } from "@/lib/stats";
+import { useEffect, useState } from "react";
+import { api, type BotPosition, type BotStats, type BotStatus, type BotTrade } from "@/lib/api";
+import { CYAN, GREEN, RED, YELLOW, usd, pct, price, tone } from "@/lib/stats";
 import { Loading, Panel } from "@/components/Panel";
-import { Sparkline } from "@/components/Sparkline";
-import { NeuralShell } from "@/components/NeuralShell";
-import { AlertBanner, PositionsTable, useGainAlerts } from "@/components/Positions";
-import {
-  AllocationBars,
-  CandleChart,
-  Correlation,
-  Distribution,
-  Gauge,
-  HeatGrid,
-  MoverScatter,
-  SentimentBars,
-  WaveBand,
-} from "@/components/Charts";
 
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 60_000;
+type Ready = Extract<BotStatus, { ready: true }>;
 
-type State = {
-  portfolio: Portfolio | null;
-  sentiment: Sentiment | null;
-  market: MarketCoin[] | null;
-  myNews: HoldingNews[] | null;
-  errors: string[];
-  updated: Date | null;
+const STATUS: Record<string, { label: string; color: string; hint: string }> = {
+  "IN TRADE": { label: "IN TRADE", color: GREEN, hint: "The bot holds this coin" },
+  SELL: { label: "SELL", color: RED, hint: "Trend broke, sells at the next daily open" },
+  BUY: { label: "BUY", color: CYAN, hint: "All six green, buys at the next daily open" },
+  READY: { label: "READY", color: YELLOW, hint: "All six green, but the bot's slots are full" },
+  WATCHING: { label: "WATCHING", color: "rgba(255,255,255,0.4)", hint: "Not all dots green yet" },
 };
 
-function useClock() {
-  const [now, setNow] = useState<Date | null>(null);
-  useEffect(() => {
-    setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
-
 export default function Home() {
-  const [s, setS] = useState<State>({ portfolio: null, sentiment: null, market: null, myNews: null, errors: [], updated: null });
-  const now = useClock();
+  const [bot, setBot] = useState<BotStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      const r = await Promise.allSettled([api.portfolio(), api.sentiment(), api.market(), api.holdingsNews()]);
-      if (cancelled) return;
-      const errors: string[] = [];
-      const pick = <T,>(x: PromiseSettledResult<T>, name: string): T | null => {
-        if (x.status === "fulfilled") return x.value;
-        errors.push(`${name}: ${x.reason}`);
-        return null;
-      };
-      setS((prev) => ({
-        // keep last good data if a refresh fails
-        portfolio: pick(r[0], "portfolio") ?? prev.portfolio,
-        sentiment: pick(r[1], "sentiment") ?? prev.sentiment,
-        market: pick(r[2], "market") ?? prev.market,
-        myNews: pick(r[3], "my-coin news") ?? prev.myNews,
-        errors,
-        updated: new Date(),
-      }));
-    }
+    const load = () =>
+      api.bot().then(
+        (b) => !cancelled && (setBot(b), setErr(null)),
+        (e) => !cancelled && setErr(String(e)),
+      );
     load();
     const id = setInterval(load, REFRESH_MS);
     return () => {
@@ -74,282 +35,391 @@ export default function Home() {
     };
   }, []);
 
-  const { market, portfolio, sentiment, myNews } = s;
-  const target = portfolio?.alert_gain_pct ?? 200;
-  const alerts = useGainAlerts(portfolio?.positions, target);
-  const [newsFilter, setNewsFilter] = useState<string>("ALL");
-  const [openStory, setOpenStory] = useState<string | null>(null);
-  const btc = market?.find((c) => c.id === "bitcoin");
-  const wave = useMemo(() => (market ? breadthWave(market) : []), [market]);
-  const stats = useMemo(() => {
-    if (!market?.length) return null;
-    const withChg = market.filter((c) => c.change_24h_pct != null);
-    const sorted = [...withChg].sort((a, b) => (b.change_24h_pct as number) - (a.change_24h_pct as number));
-    const up = withChg.filter((c) => (c.change_24h_pct as number) >= 0).length;
-    return {
-      top: sorted[0],
-      bottom: sorted[sorted.length - 1],
-      breadth: withChg.length ? (up / withChg.length) * 100 : 0,
-      cap: market.reduce((sum, c) => sum + c.market_cap, 0),
-    };
-  }, [market]);
-
-  const pf = useMemo(() => {
-    if (!portfolio || !market) return null;
-    const chg = new Map(market.map((c) => [c.symbol.toUpperCase(), c.change_24h_pct ?? 0]));
-    const delta = portfolio.holdings.reduce((sum, h) => {
-      const c = chg.get(h.symbol.toUpperCase()) ?? 0;
-      return sum + h.value - h.value / (1 + c / 100);
-    }, 0);
-    const agg = aggregate(portfolio);
-    return { delta, pct: (delta / (portfolio.total_value - delta)) * 100, top: agg[0] };
-  }, [portfolio, market]);
-
-  const utc = now ? now.toISOString().slice(11, 19) : "--:--:--";
-  const tickerItems = [
-    ...(market ?? []).map((c) => ({ k: c.id, text: `${c.symbol} ${price(c.price)}`, extra: pct(c.change_24h_pct, 1), color: tone(c.change_24h_pct) })),
-  ];
-
   return (
     <div className="mx-auto max-w-[1500px] space-y-2 p-2 sm:p-3">
-      {/* header */}
       <header className="panel flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-3 py-2">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-[var(--cyan)] text-xs font-black text-black">CH</div>
+          <div className="flex h-8 w-8 items-center justify-center rounded bg-[var(--green)] text-xs font-black text-black">6●</div>
           <div>
             <h1 className="text-[15px] font-bold tracking-wide">
-              Crypto Info Hub <span className="text-[var(--cyan)]">// MARKET TERMINAL</span>
+              Six-Dot Bot <span className="text-[var(--green)]">{"// PAPER TRADING"}</span>
             </h1>
-            <p className="panel-sub">Info only · no trading · {market?.length ?? 0} coins held · USD</p>
+            <p className="panel-sub">Pretend money only · no exchange connected · daily candles · set up for Hyperliquid spot</p>
           </div>
         </div>
-        <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-right">
-          <Stat k="BTC" v={btc ? price(btc.price) : "--"} c={tone(btc?.change_24h_pct)} />
-          <Stat k="24H" v={pct(btc?.change_24h_pct)} c={tone(btc?.change_24h_pct)} />
-          <Stat k="FEAR/GREED" v={sentiment ? String(sentiment.value) : "--"} c={YELLOW} />
-          <Stat k="BREADTH" v={stats ? `${stats.breadth.toFixed(0)}% UP` : "--"} c={stats && stats.breadth >= 50 ? GREEN : RED} />
-          <Stat k="PORTFOLIO" v={portfolio ? usd(portfolio.total_value) : "--"} c="#fff" />
-          <Link href="/bot" className="rounded bg-[var(--green)] px-2.5 py-1 text-[10px] font-bold text-black hover:brightness-110">
-            6-DOT BOT →
-          </Link>
-          <div className="text-[18px] font-bold tabular-nums">
-            {utc} <span className="text-[9px] text-white/40">UTC</span>
-          </div>
-        </dl>
+        <StatusLight bot={bot} err={err} />
+        <div className="flex items-center gap-4 text-[10px]">
+          {bot?.ready && (
+            <span className="text-white/50">
+              Last daily close {bot.last_candle} · {bot.coins_scanned} coins scanned
+            </span>
+          )}
+        </div>
       </header>
 
-      {/* live feed strip */}
-      <div className="panel flex items-center overflow-hidden text-[10px]" aria-label="Live prices for the coins you hold">
-        <span className="z-10 flex items-center gap-1.5 bg-[var(--red)] px-2.5 py-1.5 font-bold text-white">
-          <span className="live-dot h-1.5 w-1.5 rounded-full bg-white" />
-          LIVE FEED
-        </span>
-        <div className="relative min-w-0 flex-1 overflow-hidden">
-          <div className="marquee flex w-max gap-8 whitespace-nowrap py-1.5 pl-4">
-            {[...tickerItems, ...tickerItems].map((t, i) => (
-              <span key={`${t.k}-${i}`} className="text-white/70">
-                {t.text} <span style={{ color: t.color }}>{t.extra}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
+      {err && <div className="panel px-3 py-1.5 text-[10px] text-[var(--yellow)]">Bot feed failed: {err}</div>}
 
-      {s.errors.length > 0 && (
-        <div className="panel px-3 py-1.5 text-[10px] text-[var(--yellow)]">Some feeds failed, showing last good data: {s.errors.join(" · ")}</div>
+      {!bot || !bot.ready ? (
+        <Panel title="Starting up" sub={bot && !bot.ready ? bot.message : "Connecting to the bot"}>
+          <Loading h={240} />
+        </Panel>
+      ) : (
+        <Body b={bot} />
       )}
-
-      {portfolio?.positions && <AlertBanner positions={portfolio.positions} target={target} perm={alerts.perm} enable={alerts.enable} />}
-
-      {/* row 1 */}
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
-        <Panel title="Portfolio" sub={portfolio?.using_example_data ? "EXAMPLE DATA · add config/portfolio.json" : portfolio?.connections?.coinspot?.connected ? "Live · CoinSpot connected" : "Live valuation · manual holdings"} className="lg:col-span-3"
-          right={portfolio?.using_example_data ? <span className="rounded bg-[var(--yellow)] px-1.5 py-0.5 text-[8px] font-bold text-black">EXAMPLE</span> : undefined}>
-          {portfolio ? (
-            <>
-              <p className="panel-sub">Total value</p>
-              <p className="glow-green text-[34px] font-bold leading-none tabular-nums text-[var(--green)]">{usd(portfolio.total_value)}</p>
-              <div className="mt-3">
-                <AllocationBars items={aggregate(portfolio)} />
-              </div>
-            </>
-          ) : (
-            <Loading h={180} />
-          )}
-        </Panel>
-
-        <Panel title="BTC · 7 day" sub="3-hour candles · CoinGecko" className="lg:col-span-3"
-          right={btc && <span className="text-right text-[15px] font-bold tabular-nums" style={{ color: tone(btc.change_24h_pct) }}>{price(btc.price)}<br /><span className="text-[9px]">{pct(btc.change_24h_pct)}</span></span>}>
-          <div className="h-[170px]">{btc ? <CandleChart series={btc.sparkline_7d} /> : <Loading h={170} />}</div>
-        </Panel>
-
-        <div className="grid gap-2 lg:col-span-6">
-          <Panel title="Movers · size vs 24h move" sub="Each dot is a coin, sized by market cap, above the line = up">
-            <div className="h-[110px]">{market ? <MoverScatter coins={market} /> : <Loading h={110} />}</div>
-          </Panel>
-          <Panel title="Heat grid · 24h change" sub="Top 16 by market cap">
-            {market ? <HeatGrid coins={market} /> : <Loading h={100} />}
-          </Panel>
-        </div>
-      </div>
-
-      {portfolio?.positions && portfolio.positions.length > 0 && (
-        <Panel title="Positions vs your buy price" sub={`Gain since your average buy · alert at +${target}% · edit alert_gain_pct in config/portfolio.json`}
-          right={<span className="text-[9px] text-white/40">{portfolio.positions.filter((p) => p.alert).length} OVER TARGET</span>}>
-          <PositionsTable positions={portfolio.positions} target={target} />
-        </Panel>
-      )}
-
-      {/* neural shell */}
-      <Panel title="Neural shell" sub="One big cell per coin you hold · size = market cap · green up, red down · drag to rotate" right={<span className="text-[9px] text-white/40">{market?.length ?? 0} CELLS</span>}>
-        <div className="grid gap-3 lg:grid-cols-[250px_1fr_230px]">
-          <ul className="hidden space-y-1.5 lg:block">
-            {(market ?? []).map((c) => (
-              <li key={c.id} className="rounded border border-[var(--line)] bg-black/20 px-2.5 py-1.5">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[11px] font-bold text-white/90">{c.symbol} <span className="font-normal tabular-nums text-white/45">{price(c.price)}</span></span>
-                  <span className="text-[11px] font-bold tabular-nums" style={{ color: tone(c.change_24h_pct) }}>{pct(c.change_24h_pct, 1)}</span>
-                </div>
-                <div className="mt-0.5 h-7"><Sparkline values={c.sparkline_7d} color={tone(c.change_24h_pct)} /></div>
-              </li>
-            ))}
-          </ul>
-          <div className="h-[380px] lg:h-[560px]">{market ? <NeuralShell coins={market} /> : <Loading h={380} />}</div>
-          <div className="grid grid-cols-2 gap-1.5 self-start lg:grid-cols-1">
-            <Box k="Top gainer" v={stats ? `${stats.top.symbol} ${pct(stats.top.change_24h_pct, 1)}` : "--"} c={GREEN} />
-            <Box k="Top loser" v={stats ? `${stats.bottom.symbol} ${pct(stats.bottom.change_24h_pct, 1)}` : "--"} c={RED} />
-            <Box k="Coins up today" v={stats ? `${stats.breadth.toFixed(0)}% of yours` : "--"} c={stats && stats.breadth >= 50 ? GREEN : RED} />
-            <Box k="Portfolio 24h" v={pf ? `${pf.delta >= 0 ? "+" : "-"}${usd(Math.abs(pf.delta))} (${pct(pf.pct, 1)})` : "--"} c={tone(pf?.delta)} />
-            <Box k="Sentiment" v={sentiment ? `${sentiment.value} · ${sentiment.label}` : "--"} c={YELLOW} />
-            <Box k="Largest position" v={pf?.top ? `${pf.top.label} ${((pf.top.value / (portfolio?.total_value || 1)) * 100).toFixed(0)}%` : "--"} c="#37d6ff" />
-          </div>
-        </div>
-      </Panel>
-
-      {/* wave band */}
-      <Panel title="Market wave · 7 days" sub="Average hourly move across the coins you hold · green up, red down, yellow = strong up">
-        <div className="h-[100px]">{wave.length ? <WaveBand wave={wave} /> : <Loading h={100} />}</div>
-      </Panel>
-
-      {/* news on the coins you hold */}
-      <Panel title="My coins · news" sub="Click a headline to open it · Google News · refreshes every 10 min"
-        right={<span className="text-[9px] text-white/40">{myNews?.length ?? 0} STORIES</span>}>
-        {myNews ? (
-          <>
-            <div className="mb-2 flex flex-wrap gap-1">
-              {["ALL", ...Array.from(new Set(myNews.map((n) => n.symbol)))].map((sym) => (
-                <button key={sym} onClick={() => setNewsFilter(sym)} aria-pressed={newsFilter === sym}
-                  className={`rounded border px-2 py-0.5 text-[9px] font-bold tracking-wider ${newsFilter === sym ? "border-[var(--cyan)] bg-[var(--cyan)] text-black" : "border-[var(--line)] text-white/60 hover:text-white"}`}>
-                  {sym}
-                </button>
-              ))}
-            </div>
-            <ul className="grid gap-x-4 gap-y-1.5 md:grid-cols-2">
-              {myNews.filter((n) => newsFilter === "ALL" || n.symbol === newsFilter).map((n) => {
-                const id = n.link;
-                const open = openStory === id;
-                return (
-                  <li key={id} className={`rounded border ${open ? "border-[var(--cyan)] bg-[var(--cyan)]/5" : "border-[var(--line)] hover:border-white/25"}`}>
-                    <button
-                      type="button"
-                      onClick={() => setOpenStory(open ? null : id)}
-                      aria-expanded={open}
-                      className="flex w-full items-start gap-2 p-2 text-left text-[11px] leading-snug"
-                    >
-                      <span className="mt-px h-fit shrink-0 rounded bg-[var(--yellow)] px-1 text-[8px] font-bold text-black">{n.symbol}</span>
-                      <span className="min-w-0 flex-1 text-white/90">{n.title}</span>
-                      <span className="shrink-0 text-[9px] text-white/40" aria-hidden>{open ? "▲" : "▼"}</span>
-                    </button>
-                    {open && (
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] px-2 py-2 text-[10px]">
-                        <span className="text-white/60">
-                          {n.source}
-                          {n.published ? ` · ${timeAgo(n.published)}` : ""}
-                        </span>
-                        <a href={n.link} target="_blank" rel="noopener noreferrer"
-                          className="rounded bg-[var(--cyan)] px-2.5 py-1 font-bold text-black hover:brightness-110">
-                          Read full story ↗
-                        </a>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ) : (
-          <Loading h={120} />
-        )}
-      </Panel>
-
-      {/* bottom row */}
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
-        <Panel title="Sentiment chain" sub="Fear & greed (whole market) · correlation of your coins" className="lg:col-span-6">
-          {sentiment && market ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 items-end gap-3">
-                <Gauge value={sentiment.value} label={sentiment.label} />
-                <SentimentBars history={sentiment.history_7d} />
-              </div>
-              <Correlation coins={market} />
-            </div>
-          ) : (
-            <Loading h={220} />
-          )}
-        </Panel>
-
-        <Panel title="Return distribution" sub="Your coins, every hour, pooled" className="lg:col-span-6">
-          {market ? (
-            <>
-              <Distribution coins={market} />
-              <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
-                {(() => {
-                  const all = market.flatMap((c) => returns(c.sparkline_7d));
-                  const upShare = all.length ? (all.filter((r) => r >= 0).length / all.length) * 100 : 0;
-                  return (
-                    <>
-                      <Box k="Up hours" v={`${upShare.toFixed(0)}%`} c={GREEN} />
-                      <Box k="Down hours" v={`${(100 - upShare).toFixed(0)}%`} c={RED} />
-                      <Box k="Samples" v={String(all.length)} c="#fff" />
-                    </>
-                  );
-                })()}
-              </div>
-            </>
-          ) : (
-            <Loading h={220} />
-          )}
-        </Panel>
-
-      </div>
 
       <footer className="pb-2 text-center text-[9px] uppercase tracking-widest text-white/35">
-        Prices USD via CoinGecko and your exchanges · News via Google News · refresh 30s{s.updated ? ` · last ${s.updated.toISOString().slice(11, 19)} UTC` : ""}
+        Paper trading · results use past prices and are not a promise of future returns · not financial advice
       </footer>
     </div>
   );
 }
 
-function aggregate(p: Portfolio) {
-  const m = new Map<string, number>();
-  for (const h of p.holdings) m.set(h.symbol, (m.get(h.symbol) ?? 0) + h.value);
-  return Array.from(m.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
-}
+const STALE_MS = 30 * 60_000; // backend refreshes every 5 min, so 30 min without news = stopped
 
-function Stat({ k, v, c }: { k: string; v: string; c: string }) {
+function StatusLight({ bot, err }: { bot: BotStatus | null; err: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  let color = YELLOW, label = "CONNECTING", detail = "Waiting for the bot", flash = false;
+  if (err || (bot?.ready && now - bot.updated_at * 1000 > STALE_MS)) {
+    [color, label, detail, flash] = [RED, "BOT OFFLINE", "Not updating, the backend needs restarting", true];
+  } else if (bot?.ready && bot.paper.halted) {
+    [color, label, detail, flash] = [RED, "STOPPED", `Safety switch tripped on ${bot.paper.halted}, trading paused`, true];
+  } else if (bot?.ready && !bot.paper.started) {
+    [color, label, detail] = [YELLOW, "NOT TRADING YET", `Starts after the ${bot.paper.start_date} daily close (10am AEST), first trades show the day after`];
+  } else if (bot?.ready && bot.paper.positions.length) {
+    const coins = Array.from(new Set(bot.paper.positions.map((p) => p.coin))).join(", ");
+    [color, label, detail] = [GREEN, "TRADING", `In ${coins}`];
+  } else if (bot?.ready) {
+    [color, label, detail] = [RED, "NOT IN A TRADE", "Running, holding cash until all six dots are green"];
+  }
   return (
-    <div>
-      <dt className="panel-sub !mt-0">{k}</dt>
-      <dd className="text-[13px] font-bold tabular-nums" style={{ color: c }}>{v}</dd>
+    <div role="status" aria-live="polite" className="flex items-center gap-2.5 rounded border px-3 py-1.5" style={{ borderColor: color, background: `${color}14` }}>
+      <span className={`h-3.5 w-3.5 rounded-full ${flash ? "animate-pulse" : "live-dot"}`} style={{ background: color, boxShadow: `0 0 10px ${color}` }} />
+      <div className="leading-tight">
+        <div className="text-[14px] font-black tracking-wider" style={{ color }}>{label}</div>
+        <div className="text-[9px] text-white/60">{detail}</div>
+      </div>
     </div>
   );
 }
 
-function Box({ k, v, c }: { k: string; v: string; c: string }) {
+function Body({ b }: { b: Ready }) {
+  const t = b.backtest;
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
+        <Panel title="Six-dot scanner" sub="LIVE dots, updated every 5 minutes · the bot acts on them once a day at 10am AEST · a ring means the dot changed since 10am" className="lg:col-span-8">
+          <Scanner b={b} />
+        </Panel>
+        <Panel title="Paper account" sub={`$${b.capital} of pretend money · ${b.paper.started ? "started" : "starts"} ${b.paper.start_date}`} className="lg:col-span-4">
+          <PaperAccount b={b} />
+        </Panel>
+      </div>
+
+      <Panel title={`Track record since ${t.start_date}`} sub={`Same rules run on past prices · $${b.capital} start · ${b.cost_per_side_pct.toFixed(2)}% fees and slippage per trade`}>
+        <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
+          <div className="space-y-1.5">
+            <Result label="Six-dot bot" s={t.bot} color={GREEN} big />
+            <Result label="Just hold Bitcoin" s={t.hold_btc} color={YELLOW} />
+            <Result label="Bitcoin 200-day rule" s={t.rule_200} color={CYAN} />
+          </div>
+          <div>
+            <div className="h-[260px]">
+              <EquityChart curves={[
+                { pts: t.curves.hold_btc, color: YELLOW, label: "Hold BTC" },
+                { pts: t.curves.rule_200, color: CYAN, label: "200-day rule" },
+                { pts: t.curves.bot, color: GREEN, label: "Bot" },
+              ]} />
+            </div>
+            <YearTable t={t} />
+          </div>
+        </div>
+      </Panel>
+
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
+        <Panel title="What the bot would hold today" sub="If it had been running since 2021" className="lg:col-span-5">
+          <PositionTable rows={t.positions} />
+        </Panel>
+        <Panel title="Recent trades" sub="From the track record · most recent first" className="lg:col-span-7">
+          <TradeTable rows={t.recent_trades} />
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+function Scanner({ b }: { b: Ready }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="text-left text-[9px] uppercase tracking-wider text-white/40">
+            <th className="pb-1.5 pr-2 font-normal">Coin</th>
+            <th className="pb-1.5 pr-2 text-right font-normal">Price</th>
+            {b.dots.map((d) => (
+              <th key={d.key} className="pb-1.5 text-center font-normal" title={d.desc}>{d.label}</th>
+            ))}
+            <th className="pb-1.5 pl-2 text-right font-normal">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {b.scanner.map((r) => {
+            const st = STATUS[r.status];
+            return (
+              <tr key={r.coin} className="border-t border-[var(--line)]">
+                <td className="py-1.5 pr-2 font-bold text-white/90">{r.coin}</td>
+                <td className="py-1.5 pr-2 text-right tabular-nums text-white/70">{price(r.price)}</td>
+                {b.dots.map((d) => (
+                  <td key={d.key} className="py-1.5 text-center">
+                    <span
+                      className="inline-block h-3 w-3 rounded-full"
+                      title={`${d.label}: ${d.desc}${r.dots[d.key] !== r.dots_at_close[d.key] ? ` (was ${r.dots_at_close[d.key] ? "green" : "red"} at 10am)` : ""}`}
+                      aria-label={`${d.label} ${r.dots[d.key] ? "green" : "red"} now`}
+                      style={{
+                        background: r.dots[d.key] ? GREEN : RED,
+                        boxShadow: `0 0 6px ${r.dots[d.key] ? GREEN : RED}`,
+                        outline: r.dots[d.key] !== r.dots_at_close[d.key] ? `2px solid ${YELLOW}` : undefined,
+                        outlineOffset: 2,
+                      }}
+                    />
+                  </td>
+                ))}
+                <td className="py-1.5 pl-2 text-right">
+                  <span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black" style={{ background: st.color }} title={st.hint}>
+                    {st.label}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[9px] leading-relaxed text-white/40">
+        {b.dots.map((d) => `${d.label}: ${d.desc.toLowerCase()}`).join(" · ")}. Sells when 2 of Trend, Momentum and Breakout turn red, or a trailing stop is hit.
+      </p>
+    </div>
+  );
+}
+
+function PaperAccount({ b }: { b: Ready }) {
+  const p = b.paper;
+  const value = p.stats?.end ?? b.capital;
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="panel-sub">Account value</p>
+        <p className="glow-green text-[34px] font-bold leading-none tabular-nums" style={{ color: tone(value - b.capital) }}>{usd(value, 2)}</p>
+        <p className="mt-1 text-[11px] tabular-nums" style={{ color: tone(value - b.capital) }}>
+          {pct(((value - b.capital) / b.capital) * 100)} since {p.start_date}
+        </p>
+      </div>
+      {!p.started ? (
+        <p className="rounded border border-[var(--line)] bg-black/30 p-2 text-[11px] leading-relaxed text-white/70">
+          The paper account starts with the next daily close (10am AEST). Coins marked BUY or READY in the scanner will be bought at the open after that, up to the bot&apos;s {b.sleeves.reduce((n, s) => n + s.slots, 0)} slots.
+        </p>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5 text-center">
+          <Box k="Trades" v={String(p.stats?.trades ?? 0)} />
+          <Box k="Win rate" v={p.stats?.trades ? `${p.stats.win_rate_pct?.toFixed(0)}%` : "--"} />
+          <Box k="Cash" v={usd(p.cash)} />
+        </div>
+      )}
+      <div className="space-y-1">
+        {b.sleeves.map((s) => (
+          <div key={s.key} className="flex justify-between text-[10px] text-white/60">
+            <span>{s.label}</span>
+            <span className="tabular-nums">{usd(b.capital * s.share)} · up to {s.slots} coin{s.slots > 1 ? "s" : ""}</span>
+          </div>
+        ))}
+      </div>
+      <Safeguards b={b} />
+      {p.pending.length > 0 && (
+        <p className="text-[10px] text-[var(--cyan)]">
+          Next open: {p.pending.map((x) => `${x.action} ${x.coin}`).join(", ")}
+        </p>
+      )}
+      {p.positions.length > 0 && <PositionTable rows={p.positions} />}
+      {p.trades.length > 0 && <TradeTable rows={p.trades.slice(0, 10)} />}
+    </div>
+  );
+}
+
+const VERDICT: Record<string, string> = { "ON TRACK": GREEN, WATCH: YELLOW, WARNING: RED, STOPPED: RED };
+
+function Safeguards({ b }: { b: Ready }) {
+  const h = b.health, nb = b.news_brake;
+  const room = Math.max(0, h.safety_limit_pct - h.drop_now_pct);
+  return (
+    <div className="space-y-1.5 rounded border border-[var(--line)] bg-black/30 p-2 text-[10px] leading-relaxed">
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">Health check</span>
+        <span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black" style={{ background: VERDICT[h.verdict] }}>{h.verdict}</span>
+      </div>
+      <p className="text-white/70">{h.note}.</p>
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">Safety switch</span>
+        <span className="tabular-nums text-white/70">
+          {b.paper.halted ? <b style={{ color: RED }}>TRIPPED</b> : <>armed · sells all at -{h.safety_limit_pct.toFixed(0)}% · now -{h.drop_now_pct.toFixed(1)}% ({room.toFixed(0)}% room)</>}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">News brake</span>
+        <span className="font-bold" style={{ color: nb.on ? YELLOW : GREEN }}>{nb.on ? "ON · no new buys today" : "off"}</span>
+      </div>
+      {nb.on && (
+        <ul className="list-disc pl-4 text-white/60">
+          {nb.headlines.slice(0, 3).map((t) => <li key={t}>{t}</li>)}
+        </ul>
+      )}
+      <a href="/api/bot/tax.csv" className="inline-block rounded border border-[var(--line)] px-2 py-0.5 font-bold text-white/70 hover:text-white">
+        ⬇ Download tax log (CSV)
+      </a>
+    </div>
+  );
+}
+
+function Result({ label, s, color, big }: { label: string; s: BotStats; color: string; big?: boolean }) {
+  return (
+    <div className="rounded border bg-black/30 px-2.5 py-2" style={{ borderColor: big ? color : "var(--line)" }}>
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color }}>{label}</span>
+        <span className={`${big ? "text-[22px]" : "text-[15px]"} font-bold tabular-nums text-white`}>{usd(s.end)}</span>
+      </div>
+      <div className="mt-0.5 flex justify-between text-[10px] tabular-nums text-white/55">
+        <span>{pct(s.return_pct, 0)}</span>
+        <span>worst drop <span style={{ color: RED }}>-{s.worst_drop_pct.toFixed(0)}%</span></span>
+      </div>
+      {s.trades != null && (
+        <div className="mt-0.5 text-[10px] text-white/45">
+          {s.trades} trades · {s.trades_per_month?.toFixed(1)} a month · {s.win_rate_pct?.toFixed(0)}% winners
+        </div>
+      )}
+    </div>
+  );
+}
+
+function YearTable({ t }: { t: Ready["backtest"] }) {
+  const rows: [string, BotStats, string][] = [["Bot", t.bot, GREEN], ["Hold BTC", t.hold_btc, YELLOW], ["200-day", t.rule_200, CYAN]];
+  return (
+    <div className="mt-2 overflow-x-auto">
+      <table className="w-full text-[10px] tabular-nums">
+        <thead>
+          <tr className="text-white/40">
+            <th className="text-left font-normal">Year</th>
+            {t.bot.yearly.map((y) => <th key={y.year} className="text-right font-normal">{y.year}</th>)}
+            {Object.keys(t.windows).map((w) => <th key={w} className="text-right font-normal">Last {w}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, s, c]) => (
+            <tr key={label}>
+              <td className="font-bold" style={{ color: c }}>{label}</td>
+              {s.yearly.map((y) => <td key={y.year} className="text-right" style={{ color: tone(y.return_pct) }}>{pct(y.return_pct, 0)}</td>)}
+              {Object.entries(t.windows).map(([w, v]) => {
+                const x = label === "Bot" ? v.bot : label === "Hold BTC" ? v.hold_btc : null;
+                return <td key={w} className="text-right" style={{ color: tone(x) }}>{x == null ? "" : pct(x, 0)}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EquityChart({ curves }: { curves: { pts: [number, number][]; color: string; label: string }[] }) {
+  const W = 900, H = 260, pad = 34;
+  const all = curves.flatMap((c) => c.pts);
+  if (!all.length) return null;
+  const t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]));
+  const lo = Math.log(Math.min(...all.map((p) => p[1]))), hi = Math.log(Math.max(...all.map((p) => p[1])));
+  const x = (t: number) => pad + ((t - t0) / (t1 - t0 || 1)) * (W - pad - 8);
+  const y = (v: number) => 8 + (1 - (Math.log(v) - lo) / (hi - lo || 1)) * (H - 26);
+  const ticks = [100, 200, 500, 1000, 2000].filter((v) => Math.log(v) >= lo && Math.log(v) <= hi);
+  const years = Array.from(new Set(all.map((p) => new Date(p[0]).getUTCFullYear())));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" preserveAspectRatio="none" role="img" aria-label="Account value over time: bot, hold Bitcoin and 200-day rule">
+      {ticks.map((v) => (
+        <g key={v}>
+          <line x1={pad} x2={W} y1={y(v)} y2={y(v)} stroke="rgba(255,255,255,0.07)" />
+          <text x={2} y={y(v) + 3} fontSize={9} fill="rgba(255,255,255,0.4)">${v}</text>
+        </g>
+      ))}
+      {years.map((yr) => {
+        const tx = x(Date.UTC(yr, 0, 1));
+        return tx >= pad ? <text key={yr} x={tx} y={H - 4} fontSize={9} fill="rgba(255,255,255,0.4)">{yr}</text> : null;
+      })}
+      {curves.map((c) => (
+        <polyline key={c.label} fill="none" stroke={c.color} strokeWidth={c.label === "Bot" ? 2 : 1.2} opacity={c.label === "Bot" ? 1 : 0.75}
+          points={c.pts.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ")} />
+      ))}
+      {curves.map((c, i) => (
+        <text key={c.label} x={pad + 6 + i * 90} y={18} fontSize={10} fontWeight="bold" fill={c.color}>{c.label}</text>
+      ))}
+    </svg>
+  );
+}
+
+function PositionTable({ rows }: { rows: BotPosition[] }) {
+  if (!rows.length) return <p className="text-[11px] text-white/50">No open trades.</p>;
+  return (
+    <table className="w-full text-[11px] tabular-nums">
+      <thead>
+        <tr className="text-left text-[9px] uppercase tracking-wider text-white/40">
+          <th className="font-normal">Coin</th><th className="font-normal">Since</th>
+          <th className="text-right font-normal">Value</th><th className="text-right font-normal">Stop</th><th className="text-right font-normal">P/L</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((p, i) => (
+          <tr key={`${p.coin}-${p.sleeve}-${i}`} className="border-t border-[var(--line)]">
+            <td className="py-1 font-bold">{p.coin} <span className="text-[8px] font-normal text-white/40">{p.sleeve === "core" ? "CORE" : "TOP-10"}</span></td>
+            <td className="py-1 text-white/60">{p.entry_date}</td>
+            <td className="py-1 text-right">{usd(p.value, 2)}</td>
+            <td className="py-1 text-right text-white/60">{price(p.stop)}</td>
+            <td className="py-1 text-right" style={{ color: tone(p.pnl) }}>{pct(p.pnl_pct, 1)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function TradeTable({ rows }: { rows: BotTrade[] }) {
+  if (!rows.length) return <p className="text-[11px] text-white/50">No closed trades yet.</p>;
+  return (
+    <div className="max-h-[320px] overflow-y-auto">
+      <table className="w-full text-[11px] tabular-nums">
+        <thead className="sticky top-0 bg-[var(--panel,#0b0f14)]">
+          <tr className="text-left text-[9px] uppercase tracking-wider text-white/40">
+            <th className="font-normal">Coin</th><th className="font-normal">Bought</th><th className="font-normal">Sold</th>
+            <th className="font-normal">Why</th><th className="text-right font-normal">P/L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.coin}-${r.exit_date}-${i}`} className="border-t border-[var(--line)]">
+              <td className="py-1 font-bold">{r.coin}</td>
+              <td className="py-1 text-white/60">{r.entry_date}</td>
+              <td className="py-1 text-white/60">{r.exit_date}</td>
+              <td className="py-1 text-white/60">{r.reason}</td>
+              <td className="py-1 text-right" style={{ color: tone(r.pnl) }}>{usd(r.pnl, 2).replace("$-", "-$")} ({pct(r.pnl_pct, 0)})</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Box({ k, v }: { k: string; v: string }) {
   return (
     <div className="rounded border border-[var(--line)] bg-black/30 px-2 py-1.5">
       <div className="panel-sub !mt-0">{k}</div>
-      <div className="text-[12px] font-bold tabular-nums" style={{ color: c }}>{v}</div>
+      <div className="text-[12px] font-bold tabular-nums text-white">{v}</div>
     </div>
   );
 }

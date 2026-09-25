@@ -14,8 +14,8 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Crypto Info Hub",
-  description: "Live portfolio, market data, sentiment, and news dashboard.",
+  title: "Six-Dot Bot",
+  description: "Six-dot crypto trading bot, paper trading.",
 };
 
 export default function RootLayout({
