@@ -176,18 +176,28 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
     }
 
 
+async def _refresh_once() -> None:
+    global _state
+    candles, live = await asyncio.to_thread(data.refresh_all)
+    brake = await asyncio.to_thread(news_brake.check)
+    _state = await asyncio.to_thread(build, candles, live, brake)
+    await asyncio.to_thread(alerts.notify, _state["paper"])
+
+
 async def refresh_loop() -> None:
+    """Refresh every REFRESH_SECONDS of real (wall-clock) time. Survives the Mac sleeping: a refresh
+    stuck on a network call dropped by sleep is abandoned after 4 minutes, and the wait between
+    refreshes is checked against the wall clock, so a wake-up triggers a refresh straight away."""
     global _state
     while True:
+        started = time.time()
         try:
-            candles, live = await asyncio.to_thread(data.refresh_all)
-            brake = await asyncio.to_thread(news_brake.check)
-            _state = await asyncio.to_thread(build, candles, live, brake)
-            await asyncio.to_thread(alerts.notify, _state["paper"])
-        except Exception as e:  # keep serving the last good result
+            await asyncio.wait_for(_refresh_once(), timeout=240)
+        except Exception as e:  # includes timeouts; keep serving the last good result
             if not _state.get("ready"):
                 _state = {"ready": False, "message": f"Price download failed, retrying: {e}"}
-        await asyncio.sleep(REFRESH_SECONDS)
+        while time.time() - started < REFRESH_SECONDS:
+            await asyncio.sleep(15)
 
 
 def status() -> dict:
