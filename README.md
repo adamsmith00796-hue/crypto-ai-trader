@@ -1,26 +1,73 @@
-# Crypto Info Hub
+# Six-Dot Bot
 
-A live crypto information dashboard — portfolio value, market prices, a
-fear/greed sentiment gauge, trending coins, and news. No trading, no
-execution — this is purely informational.
+A self-running crypto trading bot, currently **paper trading** (pretend money, no exchange
+connected). It watches the market every 5 minutes, makes one buy/sell decision a day, and
+sends a Telegram message on every buy and sell.
 
-Built with a FastAPI backend and a Next.js 14 dashboard, dark "terminal"
-theme throughout.
+Built with a FastAPI backend (the bot) and a Next.js 14 dashboard, dark "terminal" theme.
 
-## What it shows
+## How it trades
 
-- **Portfolio** — total value and per-holding breakdown, priced live.
-- **Market** — price, 24h change, and a 7-day sparkline for a watchlist
-  of coins (CoinGecko, free/no key).
-- **Sentiment** — the Crypto Fear & Greed Index, with a 7-day trend
-  (alternative.me, free/no key).
-- **Trending** — coins currently trending on CoinGecko search.
-- **News** — latest headlines from CoinDesk and Cointelegraph RSS.
+Six checks ("dots") per coin, worked out on finished daily candles (the day closes at 10am AEST).
+**It buys only when all six are green:**
+
+| Dot | Green when |
+|---|---|
+| Trend | Price is above its 100-day average |
+| Momentum | Price is higher than 28 days ago |
+| Breakout | Price is in the upper half of at least 2 of its 20/55/100-day ranges |
+| Weekly | Last week's close is above its 20-week average |
+| Big coin | It's one of the 10 most-traded coins |
+| Calm | Its daily swings aren't in their wildest 10% of the past year |
+
+**It sells** when 2 of Trend, Momentum and Breakout turn red, or when a day **closes** below its
+trailing stop (3 x ATR below the highest close since buying, only ever moves up).
+
+**Money:** $200, split 50% Bitcoin, 50% across the 3 strongest top coins that Hyperliquid lists
+for spot trading. Spot only: no leverage, no shorting.
+
+## Track record (same rules on past prices)
+
+Since 1 Jan 2021, $200 start, 0.12% fees and slippage per trade (Hyperliquid spot):
+
+| | $200 became | Worst drop |
+|---|---|---|
+| Six-dot bot | about $1,900 | 37% |
+| Just hold Bitcoin | about $580 | 77% |
+| Bitcoin 200-day rule | about $560 | 64% |
+
+Settings were chosen on 2021 to 2023 and checked on 2024 onwards, which they never saw.
+Past prices are not a promise of future returns.
+
+**Tested and rejected** (they lost money on the unseen years): 2x/3x leverage, short selling,
+Hyperliquid perps (about 14%/yr funding cost), 1-hour and 4-hour versions, chasing the hottest
+of 70+ coins, and Krown's Cross / pullback setups (fees eat them).
+See `reports/` and `research_notes/` for the research and test results.
+
+## Safeguards
+
+- **Safety switch:** if the account falls 40% below its peak, it sells everything and stops.
+- **Health check:** ON TRACK / WATCH / WARNING / STOPPED, re-checked every refresh.
+- **News brake (untested):** skips new buys for the day when 2+ crisis headlines (hacks,
+  collapses, frozen withdrawals) appear in 24 hours. Never forces a sale.
+- **Tax log:** every closed trade as a CSV, from the dashboard (USD).
+- **Telegram alerts:** buy and sell messages only.
+
+## Code map
+
+- `backend/app/bot/strategy.py`, the six dots
+- `backend/app/bot/engine.py`, trading rules, sizing, stops, safety switch (same code for the
+  track record and the paper account, so they always match)
+- `backend/app/bot/data.py`, daily candles (Binance public data, plus Hyperliquid for HYPE)
+- `backend/app/bot/service.py`, refresh loop, paper account, health check, tax log
+- `backend/app/bot/alerts.py`, Telegram buy/sell messages
+- `backend/app/bot/news_brake.py`, crisis-headline brake
+- `frontend/src/app/page.tsx`, the dashboard
 
 ## Running locally
 
 ```bash
-# Backend
+# Backend (the bot)
 cd backend
 python -m venv venv && ./venv/bin/pip install -r requirements.txt
 ./venv/bin/uvicorn main:app --port 8000
@@ -31,91 +78,28 @@ npm install && npm run dev
 # open http://localhost:3000
 ```
 
-The frontend proxies `/api/*` to the backend at `http://localhost:8000`
-in dev (see `frontend/next.config.mjs`). Set `BACKEND_URL` to point it
-elsewhere in production.
+The first start downloads price history (about a minute). Paper-trading state lives in
+`backend/data/` (gitignored). Telegram alerts need `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+in `backend/.env` (gitignored, never committed).
 
-## Your portfolio data
+The backend also still has read-only portfolio endpoints (Coinbase, CoinSpot, Swyftx, behind
+view-only keys in `.env`); the dashboard no longer shows them.
 
-Real holdings are **not** committed to this repo — same pattern as the
-`crypto-tax-tracker` project: `config/portfolio.json` is gitignored.
-Copy the example and fill in your own:
+## Roadmap: live trading on Hyperliquid (future, real money)
 
-```bash
-cp config/portfolio.example.json config/portfolio.json
-```
+Goal: once paper trading has cleared the gates below, run the bot on a small server and connect
+it to a **non-custodial wallet on Hyperliquid** (a wallet-based exchange). The wallet gets funded,
+the bot trades spot, proceeds come back to the same wallet.
 
-Each entry is a manual holding (label, source, symbol, CoinGecko id,
-quantity) — the backend prices it live, you don't do the math. This
-replaces typing numbers into CoinMarketCap by hand, but it's still
-manual entry for now (see Roadmap).
+**Not started. No real orders are placed anywhere in this code.**
 
-## Roadmap — automated balance fetching
+Gates before real money (from `reports/Crypto trading bot build research.md`):
+1. Clean backtest: closed candles, realistic fees. Done; formal lookahead checks not yet run.
+2. Beats buy-and-hold and the 200-day rule after fees, every variant logged. Done.
+3. Test on data never tuned on. Done (2021-23 tuned, 2024+ checked).
+4. 4 to 8 weeks and 30+ trades of paper trading. **In progress, started 24 Sep 2026.**
+5. Then the smallest position size on real money, scaling up only if live results track the
+   backtest.
 
-Right now `config/portfolio.json` is hand-maintained. The next step is
-pulling balances automatically instead of typing them in:
-
-- **On-chain wallets** (MetaMask etc.) — read ERC-20/native balances
-  directly from an address via a provider like Etherscan or Alchemy
-  (needs a free API key from whichever provider you pick).
-- **CoinSpot / Swyftx** — both have authenticated REST APIs for
-  account balances (needs an API key + secret from your exchange
-  account, read-only scope).
-- **Koinly** — deliberately not on this list. Koinly has no public API
-  (open feature request since 2021); the only path is CSV export, which
-  is what `crypto-tax-tracker` already handles for tax purposes.
-
-Coinbase, CoinSpot and Swyftx read-only balance fetching are already
-built (`backend/app/coinbase.py`, `coinspot.py`, `swyftx.py`), each
-gated behind view-only API keys in `.env`. On-chain wallet reads are
-the remaining gap.
-
-## Roadmap — live trading on Hyperliquid (future, real money)
-
-Longer-term goal, discussed 25 Sep 2026: once the paper-trading bot
-(`backend/app/bot/`) has been walk-forward validated and cleared the
-gates below, deploy this to the web and connect it to a real,
-**non-custodial cold-storage wallet on Hyperliquid** (a decentralized
-exchange — wallet-based by design, no KYC layer to bypass, this is just
-how Hyperliquid works). The wallet gets funded, the bot trades it live,
-proceeds come back to the same wallet.
-
-**Not started. Nothing here is built.** This is a placeholder so the
-plan survives between sessions — it is not a signal to start wiring up
-live trading now.
-
-Before any of this happens, per `reports/Crypto trading bot build
-research.md`'s own validation framework:
-1. Clean backtest (closed candles, realistic fees/slippage, lookahead
-   checks) — the six-dot backtest exists; formal lookahead/recursive
-   checks have not been run.
-2. Beats both buy-and-hold and the 200-day rule after fees, stable
-   under ±20-30% parameter perturbation, every variant tried logged.
-   (See the 25 Sep 2026 ablation: dropping the "calm" volatility dot,
-   gated or as a size multiplier, underperformed the current six-dot
-   design on return, drawdown, and return/drawdown ratio — six dots
-   confirmed better than four in that single backtest window, but not
-   yet walk-forward validated.)
-3. Walk-forward / rolling-window testing on data never tuned on.
-4. 4-8 weeks and 30-50+ trades of paper trading, live signals matching
-   a fresh backtest ≥95% of the time.
-5. Only then: smallest position size on real capital, scale up only
-   after each ~30 live trades stay within the backtest's expected
-   range. Kill switch: drawdown beyond 1.5× the backtest's max
-   drawdown, or underperforming the 200-day rule over any 6 months.
-
-API key permissions: trade-only, withdrawals off, IP-locked, in a
-wallet/sub-account holding only the bot's money. Treat the funded
-amount as capital you can afford to lose — `reports/` is explicit that
-even a well-built bot's realistic outcome is crash protection, not
-income.
-
-## Notes
-
-- Always-dark theme by design (not a partial dark-mode toggle) —
-  matches the dense "trading terminal" aesthetic this was modeled on.
-- Colors follow a validated accessible palette (categorical hue order,
-  status colors reserved and never reused, delta indicators always
-  paired with an icon/label, not color alone).
-- This is an information dashboard. It does not place trades and holds
-  no exchange write-access credentials.
+Live setup rules: Hyperliquid trade-only API wallet (cannot withdraw), keys only on the server,
+treat the funded amount as money you can afford to lose.
