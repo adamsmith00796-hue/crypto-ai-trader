@@ -50,19 +50,20 @@ def pick_universe(client: httpx.Client) -> list[str]:
     return coins
 
 
-def _load(coin: str) -> list[list[float]]:
-    path = CANDLE_DIR / f"{coin}.json"
+def _load(coin: str, folder: Path = CANDLE_DIR) -> list[list[float]]:
+    path = folder / f"{coin}.json"
     return json.loads(path.read_text()) if path.exists() else []
 
 
-def update_coin(client: httpx.Client, coin: str) -> tuple[list[list[float]], list[float] | None]:
-    """Returns (closed daily candles, live candle or None)."""
-    rows = _load(coin)
+def update_coin(client: httpx.Client, coin: str, interval: str = "1d",
+                folder: Path = CANDLE_DIR) -> tuple[list[list[float]], list[float] | None]:
+    """Returns (closed candles, live candle or None)."""
+    rows = _load(coin, folder)
     start = rows[-1][0] + 1 if rows else FIRST_DAY_MS
     now_ms = time.time() * 1000
     live = None
     while True:
-        batch = _get(client, "klines", {"symbol": f"{coin}USDT", "interval": "1d", "limit": 1000, "startTime": start})
+        batch = _get(client, "klines", {"symbol": f"{coin}USDT", "interval": interval, "limit": 1000, "startTime": start})
         for b in batch:
             row = [b[0], float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[7])]
             if b[6] < now_ms:  # close time passed: candle is final
@@ -72,8 +73,8 @@ def update_coin(client: httpx.Client, coin: str) -> tuple[list[list[float]], lis
         if len(batch) < 1000:
             break
         start = batch[-1][0] + 1
-    CANDLE_DIR.mkdir(parents=True, exist_ok=True)
-    (CANDLE_DIR / f"{coin}.json").write_text(json.dumps(rows))
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{coin}.json").write_text(json.dumps(rows))
     return rows, live
 
 
@@ -112,3 +113,4 @@ def refresh_all() -> tuple[dict[str, list[list[float]]], dict[str, list[float]]]
             if now:
                 live[coin] = now
     return candles, live
+

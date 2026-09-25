@@ -14,13 +14,17 @@ EXCHANGE = "Hyperliquid"
 COST = 0.0012  # 0.07% taker fee + 0.05% slippage, each side
 MIN_ORDER = 10.0  # Hyperliquid minimum order, USD
 # Coins with a Hyperliquid spot market (UBTC, UETH, USOL, UZEC, ONEAR, HYPE, UENA, UPUMP, UXPL, HPENGU).
+# Stops only count on a daily CLOSE below them, so brief intraday spikes don't shake trades out
+# (Krown TA101 idea; improved every test, see research_notes/Krown TA101 rules.md).
+CLOSE_STOP = True
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
 MIN_VOL = 20e6  # a coin must trade $20M a day on average to count as "big"
 
-# Two sleeves: a Bitcoin core, and a slice spread over the biggest coins.
+# Two sleeves: a Bitcoin core, and a slice spread over the biggest coins. 50/50 with 3 slots beat
+# 70/30 with 5 slots on both 2021-23 and unseen 2024+ (bigger drops, more profit), 25 Sep 2026.
 SLEEVES = [
-    {"key": "core", "label": "Bitcoin core", "share": 0.7, "slots": 1, "coins": ["BTC"]},
-    {"key": "satellite", "label": "Top-10 coins", "share": 0.3, "slots": 5, "coins": TRADEABLE},
+    {"key": "core", "label": "Bitcoin core", "share": 0.5, "slots": 1, "coins": ["BTC"]},
+    {"key": "satellite", "label": "Top-10 coins", "share": 0.5, "slots": 3, "coins": TRADEABLE},
 ]
 
 
@@ -110,7 +114,9 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             o, _h, low, cl = bar[c][1:5]
             p = pos[c]
             p["last"] = cl
-            if low <= p["stop"]:
+            if CLOSE_STOP and cl <= p["stop"]:
+                close(c, t, cl, "Stop hit")
+            elif not CLOSE_STOP and low <= p["stop"]:
                 close(c, t, min(o, p["stop"]), "Stop hit")
             else:
                 p["high"] = max(p["high"], cl)
@@ -119,7 +125,7 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
         prev = t
         curve.append((t, cash + sum(p["units"] * p["last"] for p in pos.values())))
 
-    # today, still forming: fill at its open, check stops against its low so far, value at the current price
+    # today, still forming: fill at its open, value at the current price
     if live and prev is not None:
         t = max(r[0] for r in live.values())
         if t > prev and t >= start_ms:
@@ -129,7 +135,7 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             for c in list(pos):
                 if c in bar:
                     pos[c]["last"] = bar[c][4]
-                    if bar[c][3] <= pos[c]["stop"]:
+                    if not CLOSE_STOP and bar[c][3] <= pos[c]["stop"]:  # close-only stops wait for the close
                         close(c, t, min(bar[c][1], pos[c]["stop"]), "Stop hit")
             curve.append((t, cash + sum(p["units"] * p["last"] for p in pos.values())))
 
