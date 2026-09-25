@@ -117,7 +117,18 @@ export type BotStatus =
         pending: { action: string; coin: string; sleeve: string }[];
         trades: BotTrade[];
         cash: number;
+        halted: string | null;
       };
+      health: {
+        verdict: "ON TRACK" | "WATCH" | "WARNING" | "STOPPED";
+        note: string;
+        drop_now_pct: number;
+        worst_tested_pct: number;
+        safety_limit_pct: number;
+        bot_6m_pct: number | null;
+        btc_6m_pct: number | null;
+      };
+      news_brake: { on: boolean; headlines: string[]; crisis_headlines_24h: number };
       backtest: {
         start_date: string;
         bot: BotStats;

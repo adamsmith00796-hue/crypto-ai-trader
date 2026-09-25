@@ -68,6 +68,9 @@ def events(paper: dict) -> list[tuple[str, str]]:
         buy_key = f"buy:{t['sleeve']}:{t['coin']}:{t['entry_date']}"
         out.append((buy_key, _buy_text({**t, "stop": t["entry_stop"]})))
         out.append((f"sell:{t['sleeve']}:{t['coin']}:{t['exit_date']}", _sell_text(t)))
+    if paper.get("halted"):
+        out.append((f"halt:{paper['halted']}", f"🛑 SAFETY SWITCH (paper)\nThe account fell 40% from its peak on {paper['halted']}.\n"
+                                                 "Everything is being sold and trading is paused until you restart it."))
     for p in paper["positions"]:
         out.append((f"buy:{p['sleeve']}:{p['coin']}:{p['entry_date']}", _buy_text({**p, "stop": p["entry_stop"]})))
     return out

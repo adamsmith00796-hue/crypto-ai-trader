@@ -78,7 +78,7 @@ export default function BotPage() {
   );
 }
 
-const STALE_MS = 45 * 60_000; // backend refreshes every 15 min, so 45 min without news = stopped
+const STALE_MS = 30 * 60_000; // backend refreshes every 5 min, so 30 min without news = stopped
 
 function StatusLight({ bot, err }: { bot: BotStatus | null; err: string | null }) {
   const [now, setNow] = useState(() => Date.now());
@@ -89,6 +89,8 @@ function StatusLight({ bot, err }: { bot: BotStatus | null; err: string | null }
   let color = YELLOW, label = "CONNECTING", detail = "Waiting for the bot", flash = false;
   if (err || (bot?.ready && now - bot.updated_at * 1000 > STALE_MS)) {
     [color, label, detail, flash] = [RED, "BOT OFFLINE", "Not updating, the backend needs restarting", true];
+  } else if (bot?.ready && bot.paper.halted) {
+    [color, label, detail, flash] = [RED, "STOPPED", `Safety switch tripped on ${bot.paper.halted}, trading paused`, true];
   } else if (bot?.ready && !bot.paper.started) {
     [color, label, detail] = [YELLOW, "NOT TRADING YET", `Starts after the ${bot.paper.start_date} daily close (10am AEST), first trades show the day after`];
   } else if (bot?.ready && bot.paper.positions.length) {
@@ -237,6 +239,7 @@ function PaperAccount({ b }: { b: Ready }) {
           </div>
         ))}
       </div>
+      <Safeguards b={b} />
       {p.pending.length > 0 && (
         <p className="text-[10px] text-[var(--cyan)]">
           Next open: {p.pending.map((x) => `${x.action} ${x.coin}`).join(", ")}
@@ -244,6 +247,40 @@ function PaperAccount({ b }: { b: Ready }) {
       )}
       {p.positions.length > 0 && <PositionTable rows={p.positions} />}
       {p.trades.length > 0 && <TradeTable rows={p.trades.slice(0, 10)} />}
+    </div>
+  );
+}
+
+const VERDICT: Record<string, string> = { "ON TRACK": GREEN, WATCH: YELLOW, WARNING: RED, STOPPED: RED };
+
+function Safeguards({ b }: { b: Ready }) {
+  const h = b.health, nb = b.news_brake;
+  const room = Math.max(0, h.safety_limit_pct - h.drop_now_pct);
+  return (
+    <div className="space-y-1.5 rounded border border-[var(--line)] bg-black/30 p-2 text-[10px] leading-relaxed">
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">Health check</span>
+        <span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black" style={{ background: VERDICT[h.verdict] }}>{h.verdict}</span>
+      </div>
+      <p className="text-white/70">{h.note}.</p>
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">Safety switch</span>
+        <span className="tabular-nums text-white/70">
+          {b.paper.halted ? <b style={{ color: RED }}>TRIPPED</b> : <>armed · sells all at -{h.safety_limit_pct.toFixed(0)}% · now -{h.drop_now_pct.toFixed(1)}% ({room.toFixed(0)}% room)</>}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-white/50">News brake</span>
+        <span className="font-bold" style={{ color: nb.on ? YELLOW : GREEN }}>{nb.on ? "ON · no new buys today" : "off"}</span>
+      </div>
+      {nb.on && (
+        <ul className="list-disc pl-4 text-white/60">
+          {nb.headlines.slice(0, 3).map((t) => <li key={t}>{t}</li>)}
+        </ul>
+      )}
+      <a href="/api/bot/tax.csv" className="inline-block rounded border border-[var(--line)] px-2 py-0.5 font-bold text-white/70 hover:text-white">
+        ⬇ Download tax log (CSV)
+      </a>
     </div>
   );
 }

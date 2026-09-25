@@ -9,7 +9,10 @@ import asyncio
 import json
 import time
 
-from . import alerts, data, engine
+import csv
+import io
+
+from . import alerts, data, engine, news_brake
 from .strategy import DOTS, all_green, coin_signals, trend_broken
 
 CAPITAL = 200.0
@@ -17,6 +20,10 @@ BACKTEST_START_MS = 1609459200000  # 2021-01-01
 REFRESH_SECONDS = 5 * 60
 PAPER_FILE = data.DATA_DIR / "paper.json"
 DAY_MS = 86_400_000
+# Safety switch: sell everything and stop if the account falls this far below its peak. The worst
+# drop in the track record is about 37%, so 40% only trips on something unusual. Restart by setting
+# "safety_reset_ms" in data/paper.json to the restart day (ask Claude).
+SAFETY = 0.40
 
 _state: dict = {"ready": False, "message": "Downloading price history, first run takes about a minute"}
 
@@ -60,7 +67,31 @@ def _window(curve: list[tuple[int, float]], days: int) -> float | None:
     return (curve[-1][1] / curve[-1 - days][1] - 1) * 100
 
 
-def build(candles: dict, live: dict) -> dict:
+def _paper_settings() -> dict:
+    return json.loads(PAPER_FILE.read_text()) if PAPER_FILE.exists() else {}
+
+
+def _health(paper: dict | None, bt: dict, hold_btc: list, bt_stats: dict) -> dict:
+    """Is the bot behaving like it did in testing? Re-checked on every refresh with the latest prices."""
+    bot_6m, btc_6m = _window(bt["curve"], 182), _window(hold_btc, 182)
+    drop_now = 0.0
+    if paper and paper["curve"]:
+        peak = max(v for _, v in paper["curve"])
+        drop_now = (1 - paper["curve"][-1][1] / peak) * 100
+    worst = bt_stats["worst_drop_pct"]
+    if paper and paper.get("halted"):
+        verdict, note = "STOPPED", f"Safety switch tripped on {paper['halted']}: everything sold, trading paused"
+    elif drop_now > worst:
+        verdict, note = "WARNING", f"Down {drop_now:.0f}% from its peak, worse than anything in testing ({worst:.0f}%)"
+    elif bot_6m is not None and btc_6m is not None and bot_6m < btc_6m - 10:
+        verdict, note = "WATCH", f"Trailing just holding Bitcoin over 6 months ({bot_6m:+.0f}% vs {btc_6m:+.0f}%)"
+    else:
+        verdict, note = "ON TRACK", "Behaving within its tested range"
+    return {"verdict": verdict, "note": note, "drop_now_pct": drop_now, "worst_tested_pct": worst,
+            "safety_limit_pct": SAFETY * 100, "bot_6m_pct": bot_6m, "btc_6m_pct": btc_6m}
+
+
+def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
     prep = engine.prepare(candles)
     btc = prep["coins"]["BTC"]
     last_t = btc["rows"][-1][0]
@@ -70,7 +101,9 @@ def build(candles: dict, live: dict) -> dict:
     rule = _rule_200(prep, BACKTEST_START_MS, CAPITAL)
 
     start = _paper_start(last_t)
-    paper = engine.run_account(prep, start, CAPITAL, live)
+    paper = engine.run_account(prep, start, CAPITAL, live, safety=SAFETY,
+                               safety_from_ms=_paper_settings().get("safety_reset_ms", start),
+                               no_buy_days=news_brake.brake_days())
     if not paper["curve"]:
         paper = None  # today's candle not available yet
 
@@ -123,7 +156,10 @@ def build(candles: dict, live: dict) -> dict:
             "pending": paper["pending"] if paper else [],
             "trades": paper["trades"][::-1] if paper else [],
             "cash": paper["cash"] if paper else CAPITAL,
+            "halted": paper["halted"] if paper else None,
         },
+        "health": _health(paper, bt, hold_btc, engine.stats(bt["curve"])),
+        "news_brake": brake or {"on": False, "headlines": [], "crisis_headlines_24h": 0},
         "backtest": {
             "start_date": engine._day(BACKTEST_START_MS),
             "bot": engine.stats(bt["curve"], bt["trades"]),
@@ -145,7 +181,8 @@ async def refresh_loop() -> None:
     while True:
         try:
             candles, live = await asyncio.to_thread(data.refresh_all)
-            _state = await asyncio.to_thread(build, candles, live)
+            brake = await asyncio.to_thread(news_brake.check)
+            _state = await asyncio.to_thread(build, candles, live, brake)
             await asyncio.to_thread(alerts.notify, _state["paper"])
         except Exception as e:  # keep serving the last good result
             if not _state.get("ready"):
@@ -155,3 +192,18 @@ async def refresh_loop() -> None:
 
 def status() -> dict:
     return _state
+
+
+def tax_csv() -> str:
+    """Every closed paper trade, one row each, for an accountant. Amounts in USD."""
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Coin", "Strategy", "Date bought", "Buy price (USD)", "Amount spent (USD)", "Date sold",
+                "Sell price (USD)", "Proceeds after fees (USD)", "Profit/loss (USD)", "Days held", "Reason sold"])
+    paper = _state.get("paper") or {}
+    for t in sorted(paper.get("trades", []), key=lambda t: (t["exit_date"], t["coin"])):
+        held = (time.mktime(time.strptime(t["exit_date"], "%Y-%m-%d")) - time.mktime(time.strptime(t["entry_date"], "%Y-%m-%d"))) / 86400
+        w.writerow([t["coin"], "Bitcoin core" if t["sleeve"] == "core" else "Top coins", t["entry_date"],
+                    f"{t['entry_price']:.6g}", f"{t['cost']:.2f}", t["exit_date"], f"{t['exit_price']:.6g}",
+                    f"{t['cost'] + t['pnl']:.2f}", f"{t['pnl']:.2f}", int(held), t["reason"]])
+    return out.getvalue()

@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bot import service as bot
@@ -61,6 +61,12 @@ async def sentiment():
 @app.get("/api/bot")
 async def bot_status():
     return bot.status()
+
+
+@app.get("/api/bot/tax.csv")
+async def bot_tax_csv():
+    return Response(bot.tax_csv(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="six-dot-bot-trades.csv"'})
 
 
 @app.get("/api/health")

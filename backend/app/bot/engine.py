@@ -50,10 +50,13 @@ def _day(iso_ms: int) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(iso_ms / 1000))
 
 
-def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict | None = None) -> dict:
+def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict | None = None,
+               halt_ms: int | None = None, no_buy_days: set[int] | None = None) -> dict:
     """Replay closed days from start_ms. The first decision is taken at the close of the day
     before start_ms. If `live` holds today's still-forming candles ({coin: row}), today's
-    fills happen at its open and positions are valued at the current price."""
+    fills happen at its open and positions are valued at the current price.
+    halt_ms: from this day's close, sell everything and stop (safety switch).
+    no_buy_days: days whose close makes no new buys (news brake); sells and stops still work."""
     info, K = prep["coins"], sleeve["slots"]
     allowed = sleeve["coins"]
     days = [t for t in prep["days"] if t >= start_ms]
@@ -82,8 +85,8 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             if c not in bar:
                 continue
             o = bar[c][1]
-            if act == "sell" and c in pos:
-                close(c, t, o, "Trend turned")
+            if act in ("sell", "halt") and c in pos:
+                close(c, t, o, "Trend turned" if act == "sell" else "Safety switch")
             elif act == "buy" and c not in pos and len(pos) < K and prev_sig.get(c):
                 equity = cash + sum(p["units"] * (bar[x][1] if x in bar else p["last"]) for x, p in pos.items())
                 slot = min(cash, equity / K)
@@ -95,7 +98,11 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
 
     def scan(t: int) -> list[tuple[str, str]]:
         """End-of-day decisions for the next open."""
+        if halt_ms is not None and t >= halt_ms:
+            return [("halt", c) for c in pos]
         queue = [("sell", c) for c in pos if (s := sig(c, t)) and trend_broken(s)]
+        if no_buy_days and t in no_buy_days:
+            return queue
         free = K - len(pos) + len(queue)
         cands = [(s["strength"], c) for c in info
                  if c not in pos and (not allowed or c in allowed) and (s := sig(c, t)) and all_green(s)]
@@ -148,11 +155,35 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
     return {"curve": curve, "trades": trades, "positions": open_pos, "pending": pending, "cash": cash}
 
 
-def run_account(prep: dict, start_ms: int, capital: float, live: dict | None = None) -> dict:
-    """Run both sleeves with their share of the capital and combine them."""
-    parts = [run_sleeve(prep, s, start_ms, capital * s["share"], live) for s in SLEEVES]
-    curve = [(t, sum(p["curve"][i][1] for p in parts)) for i, (t, _) in enumerate(parts[0]["curve"])]
+def _combine(parts: list[dict]) -> list[tuple[int, float]]:
+    return [(t, sum(p["curve"][i][1] for p in parts)) for i, (t, _) in enumerate(parts[0]["curve"])]
+
+
+def safety_trip(curve: list[tuple[int, float]], limit: float, from_ms: int = 0) -> int | None:
+    """First day (closed days only) the account sits `limit` or more below its peak since from_ms."""
+    peak = 0.0
+    for t, v in curve[:-1] if len(curve) > 1 else curve:  # last point may be today's unfinished day
+        if t < from_ms:
+            continue
+        peak = max(peak, v)
+        if peak and v <= peak * (1 - limit):
+            return t
+    return None
+
+
+def run_account(prep: dict, start_ms: int, capital: float, live: dict | None = None,
+                safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | None = None) -> dict:
+    """Run both sleeves with their share of the capital and combine them. With `safety`, the whole
+    account is sold and stopped the first time it falls that fraction below its peak."""
+    def go(halt_ms: int | None) -> list[dict]:
+        return [run_sleeve(prep, s, start_ms, capital * s["share"], live, halt_ms, no_buy_days) for s in SLEEVES]
+    parts = go(None)
+    halted = safety_trip(_combine(parts), safety, safety_from_ms) if safety else None
+    if halted is not None:
+        parts = go(halted)
+    curve = _combine(parts)
     return {
+        "halted": _day(halted) if halted is not None else None,
         "curve": curve,
         "trades": sorted((x for p in parts for x in p["trades"]), key=lambda x: x["exit_date"]),
         "positions": [x for p in parts for x in p["positions"]],
