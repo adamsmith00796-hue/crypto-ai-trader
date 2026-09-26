@@ -17,6 +17,7 @@ import httpx
 BASE = "https://data-api.binance.vision/api/v3/"
 HL_INFO = "https://api.hyperliquid.xyz/info"
 HL_ONLY = ["HYPE"]  # coins tradeable on Hyperliquid but not on Binance
+HL_SPOT = {"KNTQ": "@334", "DRV": "@700"}  # moonshot coins that only trade on Hyperliquid spot
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 CANDLE_DIR = DATA_DIR / "candles"
 UNIVERSE_SIZE = 100
@@ -78,11 +79,11 @@ def update_coin(client: httpx.Client, coin: str, interval: str = "1d",
     return rows, live
 
 
-def update_hl_coin(client: httpx.Client, coin: str) -> tuple[list[list[float]], list[float] | None]:
-    """Hyperliquid daily candles (whole history each time, it's small)."""
+def update_hl_coin(client: httpx.Client, coin: str, hl_name: str | None = None) -> tuple[list[list[float]], list[float] | None]:
+    """Hyperliquid daily candles (whole history each time, it's small). Spot pairs use their @id name."""
     now_ms = time.time() * 1000
     r = client.post(HL_INFO, json={"type": "candleSnapshot", "req": {
-        "coin": coin, "interval": "1d", "startTime": FIRST_DAY_MS, "endTime": int(now_ms)}}, timeout=30)
+        "coin": hl_name or coin, "interval": "1d", "startTime": FIRST_DAY_MS, "endTime": int(now_ms)}}, timeout=30)
     r.raise_for_status()
     rows, live = [], None
     for k in r.json():
@@ -103,9 +104,12 @@ def refresh_all() -> tuple[dict[str, list[list[float]]], dict[str, list[float]]]
     live: dict[str, list[float]] = {}
     with httpx.Client() as client:
         coins = pick_universe(client)
-        for coin in coins + [c for c in HL_ONLY if c not in coins]:
+        for coin in coins + [c for c in [*HL_ONLY, *HL_SPOT] if c not in coins]:
             try:
-                rows, now = update_hl_coin(client, coin) if coin in HL_ONLY else update_coin(client, coin)
+                if coin in HL_ONLY or coin in HL_SPOT:
+                    rows, now = update_hl_coin(client, coin, HL_SPOT.get(coin))
+                else:
+                    rows, now = update_coin(client, coin)
             except httpx.HTTPError:
                 rows, now = _load(coin), None  # keep what we have if one coin fails
             if rows:

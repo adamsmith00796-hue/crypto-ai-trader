@@ -119,6 +119,8 @@ function Body({ b }: { b: Ready }) {
         </Panel>
       </div>
 
+      <MoonshotPanel b={b} />
+
       <Panel title={`Track record since ${t.start_date}`} sub={`Same rules run on past prices · $${b.capital} start · ${b.cost_per_side_pct.toFixed(2)}% fees and slippage per trade`}>
         <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
           <div className="space-y-1.5">
@@ -244,6 +246,53 @@ function PaperAccount({ b }: { b: Ready }) {
       {p.positions.length > 0 && <PositionTable rows={p.positions} />}
       {p.trades.length > 0 && <TradeTable rows={p.trades.slice(0, 10)} />}
     </div>
+  );
+}
+
+function MoonshotPanel({ b }: { b: Ready }) {
+  const m = b.moonshot, r = m.rules;
+  const value = m.stats?.end ?? m.capital;
+  return (
+    <Panel title="🚀 Moonshot pot · high risk" sub={`$${m.capital} of pretend money · ${m.started ? "started" : "starts"} ${m.start_date} · small Hyperliquid coins · can go to zero`}
+      right={<span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black" style={{ background: m.btc_uptrend ? GREEN : RED }}>
+        {m.btc_uptrend ? "BTC UPTREND · BUYING ALLOWED" : "BTC DOWNTREND · NO NEW BUYS"}</span>}>
+      <div className="grid gap-3 lg:grid-cols-[220px_1fr_1fr]">
+        <div className="space-y-1">
+          <p className="panel-sub">Pot value</p>
+          <p className="text-[28px] font-bold leading-none tabular-nums" style={{ color: tone(value - m.capital) }}>{usd(value, 2)}</p>
+          <p className="text-[11px] tabular-nums" style={{ color: tone(value - m.capital) }}>{pct(((value - m.capital) / m.capital) * 100)}</p>
+          <p className="pt-1 text-[9px] leading-relaxed text-white/45">
+            Buys a new 20-day high on 2x volume while Bitcoin is rising. Up to {r.slots} bets. Sells at -{r.stop_pct.toFixed(0)}%,
+            on a close {r.trail_pct.toFixed(0)}% below its peak, half at +{r.take_half_pct.toFixed(0)}%, or after {r.time_stop_days} days if not up 10%.
+          </p>
+        </div>
+        <div>
+          <p className="panel-sub mb-1">Watching</p>
+          <table className="w-full text-[11px] tabular-nums">
+            <tbody>
+              {m.watch.map((w) => (
+                <tr key={w.coin} className="border-t border-[var(--line)]">
+                  <td className="py-1 font-bold">{w.coin}</td>
+                  <td className="py-1 text-right text-white/70">{price(w.price)}</td>
+                  <td className="py-1 text-right text-white/50" title="How far below its 20-day high">
+                    {w.to_breakout_pct == null ? "--" : w.to_breakout_pct <= 0 ? "at high" : `${w.to_breakout_pct.toFixed(1)}% below high`}
+                  </td>
+                  <td className="py-1 pl-2 text-right">
+                    <span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black"
+                      style={{ background: w.status === "IN TRADE" ? GREEN : w.status === "BUY" ? CYAN : "rgba(255,255,255,0.4)" }}>{w.status}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="space-y-2">
+          <p className="panel-sub">Bets</p>
+          <PositionTable rows={m.positions} />
+          {m.trades.length > 0 && <TradeTable rows={m.trades.slice(0, 8)} />}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -376,7 +425,7 @@ function PositionTable({ rows }: { rows: BotPosition[] }) {
       <tbody>
         {rows.map((p, i) => (
           <tr key={`${p.coin}-${p.sleeve}-${i}`} className="border-t border-[var(--line)]">
-            <td className="py-1 font-bold">{p.coin} <span className="text-[8px] font-normal text-white/40">{p.sleeve === "core" ? "CORE" : "TOP-10"}</span></td>
+            <td className="py-1 font-bold">{p.coin} <span className="text-[8px] font-normal text-white/40">{p.sleeve === "core" ? "CORE" : p.sleeve === "moonshot" ? "MOON" : "TOP-10"}</span></td>
             <td className="py-1 text-white/60">{p.entry_date}</td>
             <td className="py-1 text-right">{usd(p.value, 2)}</td>
             <td className="py-1 text-right text-white/60">{price(p.stop)}</td>

@@ -45,13 +45,14 @@ def _money(x: float) -> str:
 
 
 def _where(x: dict) -> str:
-    return "paper, Bitcoin core" if x["sleeve"] == "core" else "paper, top-10 slice"
+    return {"core": "paper, Bitcoin core", "moonshot": "paper, 🚀 MOONSHOT"}.get(x["sleeve"], "paper, top-10 slice")
 
 
 def _buy_text(p: dict) -> str:
     return (f"🟢 BUY {p['coin']} ({_where(p)})\n"
             f"Price {_money(p['entry_price'])} · amount {_money(p['cost'])}\n"
-            f"Stop {_money(p['stop'])} · all six dots green")
+            + (f"Hard stop {_money(p['stop'])} · 20-day breakout on big volume" if p["sleeve"] == "moonshot"
+               else f"Stop {_money(p['stop'])} · all six dots green"))
 
 
 def _sell_text(t: dict) -> str:

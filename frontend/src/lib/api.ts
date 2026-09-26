@@ -129,6 +129,19 @@ export type BotStatus =
         btc_6m_pct: number | null;
       };
       news_brake: { on: boolean; headlines: string[]; crisis_headlines_24h: number };
+      moonshot: {
+        capital: number;
+        start_date: string;
+        started: boolean;
+        stats: BotStats | null;
+        positions: BotPosition[];
+        trades: BotTrade[];
+        pending: { action: string; coin: string; sleeve: string }[];
+        cash: number;
+        watch: { coin: string; price: number; status: "IN TRADE" | "BUY" | "WATCHING"; to_breakout_pct: number | null; volume_x: number | null; thin: boolean }[];
+        btc_uptrend: boolean;
+        rules: { slots: number; stop_pct: number; trail_pct: number; take_half_pct: number; time_stop_days: number };
+      };
       backtest: {
         start_date: string;
         bot: BotStats;

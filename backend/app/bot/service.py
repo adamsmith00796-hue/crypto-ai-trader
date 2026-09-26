@@ -12,10 +12,11 @@ import time
 import csv
 import io
 
-from . import alerts, data, engine, news_brake
+from . import alerts, data, engine, moonshot, news_brake
 from .strategy import DOTS, all_green, coin_signals, trend_broken
 
-CAPITAL = 200.0
+CAPITAL = 800.0  # main six-dot bot; the real plan is $800 here + $200 moonshot
+MOON_CAPITAL = 200.0
 BACKTEST_START_MS = 1609459200000  # 2021-01-01
 REFRESH_SECONDS = 5 * 60
 PAPER_FILE = data.DATA_DIR / "paper.json"
@@ -67,6 +68,15 @@ def _window(curve: list[tuple[int, float]], days: int) -> float | None:
     return (curve[-1][1] / curve[-1 - days][1] - 1) * 100
 
 
+def _moon_start(latest_closed_ms: int) -> int:
+    """The moonshot paper pot starts from the day it was switched on (27 Sep 2026)."""
+    settings = json.loads(PAPER_FILE.read_text())
+    if "moonshot_start_ms" not in settings:
+        settings["moonshot_start_ms"] = latest_closed_ms + DAY_MS
+        PAPER_FILE.write_text(json.dumps(settings))
+    return settings["moonshot_start_ms"]
+
+
 def _paper_settings() -> dict:
     return json.loads(PAPER_FILE.read_text()) if PAPER_FILE.exists() else {}
 
@@ -106,6 +116,10 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
                                no_buy_days=news_brake.brake_days())
     if not paper["curve"]:
         paper = None  # today's candle not available yet
+
+    mstart = _moon_start(last_t)
+    moon = moonshot.run(candles, mstart, MOON_CAPITAL, live)
+    moon_started = bool(moon["curve"])
 
     # Statuses come from the paper account only. Before it starts, all-green coins show BUY,
     # meaning the paper account will buy them at its first open.
@@ -158,6 +172,21 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
             "cash": paper["cash"] if paper else CAPITAL,
             "halted": paper["halted"] if paper else None,
         },
+        "moonshot": {
+            "capital": MOON_CAPITAL,
+            "start_date": engine._day(mstart),
+            "started": moon_started,
+            "stats": engine.stats(moon["curve"], moon["trades"]) if moon_started else None,
+            "positions": moon["positions"],
+            "trades": moon["trades"][::-1],
+            "pending": moon["pending"],
+            "cash": moon["cash"],
+            "watch": moon["watch"],
+            "btc_uptrend": moon["btc_uptrend"],
+            "halted": None,
+            "rules": {"slots": moonshot.SLOTS, "stop_pct": moonshot.STOP * 100, "trail_pct": moonshot.TRAIL * 100,
+                      "take_half_pct": moonshot.TAKE * 100, "time_stop_days": moonshot.DAYS_MAX},
+        },
         "health": _health(paper, bt, hold_btc, engine.stats(bt["curve"])),
         "news_brake": brake or {"on": False, "headlines": [], "crisis_headlines_24h": 0},
         "backtest": {
@@ -182,6 +211,7 @@ async def _refresh_once() -> None:
     brake = await asyncio.to_thread(news_brake.check)
     _state = await asyncio.to_thread(build, candles, live, brake)
     await asyncio.to_thread(alerts.notify, _state["paper"])
+    await asyncio.to_thread(alerts.notify, _state["moonshot"])
 
 
 async def refresh_loop() -> None:
