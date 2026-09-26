@@ -27,6 +27,13 @@ CRISIS = re.compile(
     r"crash(es|ed)? \d+%|plunges? \d+%|liquidations? (top|hit|surge)\w*)\b",
     re.IGNORECASE,
 )
+# Follow-up stories about an old event (lawsuits, arrests, sentencing) and names that merely contain
+# a crisis word don't count: on 26 Sep 2026 "Hack VC" and a lawsuit over an old exploit falsely tripped it.
+IGNORE = re.compile(
+    r"\bhack vc\b|\bsue[sd]?\b|lawsuit|\bcourt\b|\btrial\b|sentenc\w*|arrest\w*|\bcharged\b|indict\w*|"
+    r"\bextradit\w*|\byears? (ago|later)\b|anniversary",
+    re.IGNORECASE,
+)
 
 
 def load() -> dict[str, list[str]]:
@@ -48,8 +55,9 @@ def check() -> dict:
     hits = []
     for n in items:
         pub = n.get("published")
-        if pub and datetime.fromisoformat(pub).timestamp() >= cutoff and CRISIS.search(n["title"]):
-            hits.append(n["title"])
+        title = n["title"]
+        if pub and datetime.fromisoformat(pub).timestamp() >= cutoff and CRISIS.search(title) and not IGNORE.search(title):
+            hits.append(title)
     today = int(time.time() * 1000) // DAY_MS * DAY_MS
     days = load()
     if len(hits) >= MIN_HEADLINES and str(today) not in days:
