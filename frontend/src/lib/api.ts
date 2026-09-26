@@ -75,6 +75,7 @@ export type BotPosition = {
   sleeve: string;
   entry_date: string;
   entry_price: number;
+  cost: number;
   last_price: number;
   stop: number;
   value: number;
@@ -87,6 +88,7 @@ export type BotTrade = {
   sleeve: string;
   entry_date: string;
   entry_price: number;
+  cost: number;
   exit_date: string;
   exit_price: number;
   reason: string;

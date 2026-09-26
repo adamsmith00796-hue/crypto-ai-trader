@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type BotPosition, type BotStats, type BotStatus, type BotTrade } from "@/lib/api";
 import { CYAN, GREEN, RED, YELLOW, usd, pct, price, tone } from "@/lib/stats";
 import { Loading, Panel } from "@/components/Panel";
@@ -44,7 +44,7 @@ export default function Home() {
             <h1 className="text-[15px] font-bold tracking-wide">
               Six-Dot Bot <span className="text-[var(--green)]">{"// PAPER TRADING"}</span>
             </h1>
-            <p className="panel-sub">Pretend money only · no exchange connected · daily candles · set up for Hyperliquid spot</p>
+            <p className="panel-sub">Pretend money · runs 24/7 on the server · Hyperliquid spot</p>
           </div>
         </div>
         <StatusLight bot={bot} err={err} />
@@ -110,18 +110,28 @@ function Body({ b }: { b: Ready }) {
   const t = b.backtest;
   return (
     <>
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
-        <Panel title="Six-dot scanner" sub="LIVE dots, updated every 5 minutes · the bot acts on them once a day at 10am AEST · a ring means the dot changed since 10am" className="lg:col-span-8">
-          <Scanner b={b} />
+      <Overview b={b} />
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        <Panel title="Holding now" sub="Both pots · profit or loss since each buy">
+          <Holdings b={b} />
         </Panel>
-        <Panel title="Paper account" sub={`$${b.capital} of pretend money · ${b.paper.started ? "started" : "starts"} ${b.paper.start_date}`} className="lg:col-span-4">
-          <PaperAccount b={b} />
+        <Panel title="Latest activity" sub="Buys and sells, newest first · you also get these on Telegram">
+          <Activity b={b} />
         </Panel>
       </div>
+      <SafetyLine b={b} />
 
-      <MoonshotPanel b={b} />
-
-      <Panel title={`Track record since ${t.start_date}`} sub={`Same rules run on past prices · $${b.capital} start · ${b.cost_per_side_pct.toFixed(2)}% fees and slippage per trade`}>
+      <p className="px-1 pt-2 text-[10px] font-bold uppercase tracking-widest text-white/40">Details</p>
+      <Details title="Six-dot scanner" hint="The six checks for each coin, live">
+        <Scanner b={b} />
+      </Details>
+      <Details title="🚀 Moonshot watch list" hint="Which small coins are close to a breakout">
+        <MoonshotPanel b={b} />
+      </Details>
+      <Details title="Safety and tax log" hint="Safety switch, news brake, download every trade">
+        <Safeguards b={b} />
+      </Details>
+      <Details title={`Track record since ${t.start_date}`} hint={`Same rules on past prices: $${b.capital} would be ${usd(t.bot.end)} vs ${usd(t.hold_btc.end)} holding Bitcoin`}>
         <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
           <div className="space-y-1.5">
             <Result label="Six-dot bot" s={t.bot} color={GREEN} big />
@@ -129,7 +139,7 @@ function Body({ b }: { b: Ready }) {
             <Result label="Bitcoin 200-day rule" s={t.rule_200} color={CYAN} />
           </div>
           <div>
-            <div className="h-[260px]">
+            <div className="h-[220px]">
               <EquityChart curves={[
                 { pts: t.curves.hold_btc, color: YELLOW, label: "Hold BTC" },
                 { pts: t.curves.rule_200, color: CYAN, label: "200-day rule" },
@@ -139,17 +149,127 @@ function Body({ b }: { b: Ready }) {
             <YearTable t={t} />
           </div>
         </div>
-      </Panel>
-
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-12">
-        <Panel title="What the bot would hold today" sub="If it had been running since 2021" className="lg:col-span-5">
-          <PositionTable rows={t.positions} />
-        </Panel>
-        <Panel title="Recent trades" sub="From the track record · most recent first" className="lg:col-span-7">
-          <TradeTable rows={t.recent_trades} />
-        </Panel>
-      </div>
+        <p className="mt-2 text-[10px] text-white/40">Past prices, not a promise. Coin list is today&apos;s, so coins that collapsed are missing.</p>
+      </Details>
     </>
+  );
+}
+
+function Details({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
+  return (
+    <details className="panel group">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5">
+        <span>
+          <span className="panel-title">{title}</span>
+          <span className="panel-sub block">{hint}</span>
+        </span>
+        <span className="text-white/40 transition-transform group-open:rotate-180" aria-hidden>▼</span>
+      </summary>
+      <div className="border-t border-[var(--line)] p-3">{children}</div>
+    </details>
+  );
+}
+
+function Overview({ b }: { b: Ready }) {
+  const p = b.paper, m = b.moonshot;
+  const main = p.stats?.end ?? b.capital, moon = m.stats?.end ?? m.capital;
+  const start = b.capital + m.capital, total = main + moon, change = total - start;
+  const next = [...p.pending, ...m.pending];
+  return (
+    <section className="panel grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+      <div>
+        <p className="panel-sub !mt-0">Total value · pretend money · started {p.start_date}</p>
+        <p className="glow-green text-[44px] font-bold leading-none tabular-nums sm:text-[56px]" style={{ color: tone(change) }}>{usd(total, 2)}</p>
+        <p className="mt-1 text-[14px] font-bold tabular-nums" style={{ color: tone(change) }}>
+          {change >= 0 ? "+" : "-"}{usd(Math.abs(change), 2)} ({pct((change / start) * 100)})
+        </p>
+        {next.length > 0 && <p className="mt-1 text-[11px] text-[var(--cyan)]">Next daily open (10am): {next.map((x) => `${x.action} ${x.coin}`).join(", ")}</p>}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[11px] sm:w-[300px]">
+        <Pot label="Main bot" value={main} start={b.capital} />
+        <Pot label="🚀 Moonshot" value={moon} start={m.capital} />
+      </div>
+    </section>
+  );
+}
+
+function Pot({ label, value, start }: { label: string; value: number; start: number }) {
+  return (
+    <div className="rounded border border-[var(--line)] bg-black/30 px-2.5 py-2">
+      <div className="panel-sub !mt-0">{label}</div>
+      <div className="text-[16px] font-bold tabular-nums text-white">{usd(value, 0)}</div>
+      <div className="tabular-nums" style={{ color: tone(value - start) }}>{pct(((value - start) / start) * 100, 1)}</div>
+    </div>
+  );
+}
+
+function Holdings({ b }: { b: Ready }) {
+  const rows = [...b.paper.positions, ...b.moonshot.positions].sort((x, y) => y.value - x.value);
+  if (!rows.length) return <p className="text-[12px] text-white/60">Nothing right now. The bot is holding cash until its rules say buy.</p>;
+  const cash = b.paper.cash + b.moonshot.cash;
+  return (
+    <ul className="space-y-1.5">
+      {rows.map((r, i) => (
+        <li key={`${r.coin}-${r.sleeve}-${i}`} className="flex items-center justify-between gap-2 rounded border border-[var(--line)] bg-black/20 px-2.5 py-2">
+          <span className="flex items-center gap-2">
+            <span className="text-[14px] font-bold">{r.coin}</span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-[8px] font-bold tracking-wider text-white/60">{r.sleeve === "moonshot" ? "🚀 MOON" : "MAIN"}</span>
+          </span>
+          <span className="text-right tabular-nums">
+            <span className="block text-[13px] text-white">{usd(r.value, 2)}</span>
+            <span className="block text-[11px] font-bold" style={{ color: tone(r.pnl) }}>{pct(r.pnl_pct, 1)}</span>
+          </span>
+        </li>
+      ))}
+      {cash >= 1 && <li className="flex justify-between px-2.5 pt-1 text-[11px] text-white/50"><span>Cash waiting</span><span className="tabular-nums">{usd(cash, 2)}</span></li>}
+    </ul>
+  );
+}
+
+function Activity({ b }: { b: Ready }) {
+  type Row = { date: string; text: string; color: string; sub: string };
+  const tag = (s: string) => (s === "moonshot" ? " 🚀" : "");
+  const rows: Row[] = [];
+  for (const t of [...b.paper.trades, ...b.moonshot.trades]) {
+    rows.push({ date: t.exit_date, text: `Sold ${t.coin}${tag(t.sleeve)}`, color: tone(t.pnl), sub: `${usd(t.pnl, 2).replace("$-", "-$")} (${pct(t.pnl_pct, 1)}) · ${t.reason.toLowerCase()}` });
+    rows.push({ date: t.entry_date, text: `Bought ${t.coin}${tag(t.sleeve)}`, color: CYAN, sub: `${usd(t.cost, 2)} at ${price(t.entry_price)}` });
+  }
+  for (const p of [...b.paper.positions, ...b.moonshot.positions]) {
+    rows.push({ date: p.entry_date, text: `Bought ${p.coin}${tag(p.sleeve)}`, color: CYAN, sub: `${usd(p.cost, 2)} at ${price(p.entry_price)}` });
+  }
+  rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
+  if (!rows.length) return <p className="text-[12px] text-white/60">No trades yet.</p>;
+  return (
+    <ul className="space-y-1.5">
+      {rows.slice(0, 8).map((r, i) => (
+        <li key={i} className="flex items-start justify-between gap-2 border-b border-[var(--line)] pb-1.5 last:border-0">
+          <span>
+            <span className="block text-[12px] font-bold" style={{ color: r.color }}>{r.text}</span>
+            <span className="block text-[10px] text-white/50 tabular-nums">{r.sub}</span>
+          </span>
+          <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{r.date}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SafetyLine({ b }: { b: Ready }) {
+  const h = b.health, nb = b.news_brake;
+  const chips: [string, string, string][] = [
+    ["Health", h.verdict, VERDICT[h.verdict]],
+    ["Safety switch", b.paper.halted ? "TRIPPED" : `armed · ${Math.max(0, h.safety_limit_pct - h.drop_now_pct).toFixed(0)}% room`, b.paper.halted ? RED : GREEN],
+    ["News brake", nb.on ? "ON · no new buys today" : "off", nb.on ? YELLOW : GREEN],
+    ["Moonshot buying", b.moonshot.btc_uptrend ? "allowed" : "paused (BTC falling)", b.moonshot.btc_uptrend ? GREEN : YELLOW],
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chips.map(([k, v, c]) => (
+        <span key={k} className="rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${c}66` }}>
+          <span className="text-white/50">{k}: </span><b style={{ color: c }}>{v}</b>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -202,49 +322,6 @@ function Scanner({ b }: { b: Ready }) {
       <p className="mt-2 text-[9px] leading-relaxed text-white/40">
         {b.dots.map((d) => `${d.label}: ${d.desc.toLowerCase()}`).join(" · ")}. Sells when 2 of Trend, Momentum and Breakout turn red, or a trailing stop is hit.
       </p>
-    </div>
-  );
-}
-
-function PaperAccount({ b }: { b: Ready }) {
-  const p = b.paper;
-  const value = p.stats?.end ?? b.capital;
-  return (
-    <div className="space-y-3">
-      <div>
-        <p className="panel-sub">Account value</p>
-        <p className="glow-green text-[34px] font-bold leading-none tabular-nums" style={{ color: tone(value - b.capital) }}>{usd(value, 2)}</p>
-        <p className="mt-1 text-[11px] tabular-nums" style={{ color: tone(value - b.capital) }}>
-          {pct(((value - b.capital) / b.capital) * 100)} since {p.start_date}
-        </p>
-      </div>
-      {!p.started ? (
-        <p className="rounded border border-[var(--line)] bg-black/30 p-2 text-[11px] leading-relaxed text-white/70">
-          The paper account starts with the next daily close (10am AEST). Coins marked BUY or READY in the scanner will be bought at the open after that, up to the bot&apos;s {b.sleeves.reduce((n, s) => n + s.slots, 0)} slots.
-        </p>
-      ) : (
-        <div className="grid grid-cols-3 gap-1.5 text-center">
-          <Box k="Trades" v={String(p.stats?.trades ?? 0)} />
-          <Box k="Win rate" v={p.stats?.trades ? `${p.stats.win_rate_pct?.toFixed(0)}%` : "--"} />
-          <Box k="Cash" v={usd(p.cash)} />
-        </div>
-      )}
-      <div className="space-y-1">
-        {b.sleeves.map((s) => (
-          <div key={s.key} className="flex justify-between text-[10px] text-white/60">
-            <span>{s.label}</span>
-            <span className="tabular-nums">{usd(b.capital * s.share)} · up to {s.slots} coin{s.slots > 1 ? "s" : ""}</span>
-          </div>
-        ))}
-      </div>
-      <Safeguards b={b} />
-      {p.pending.length > 0 && (
-        <p className="text-[10px] text-[var(--cyan)]">
-          Next open: {p.pending.map((x) => `${x.action} ${x.coin}`).join(", ")}
-        </p>
-      )}
-      {p.positions.length > 0 && <PositionTable rows={p.positions} />}
-      {p.trades.length > 0 && <TradeTable rows={p.trades.slice(0, 10)} />}
     </div>
   );
 }
@@ -464,11 +541,3 @@ function TradeTable({ rows }: { rows: BotTrade[] }) {
   );
 }
 
-function Box({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="rounded border border-[var(--line)] bg-black/30 px-2 py-1.5">
-      <div className="panel-sub !mt-0">{k}</div>
-      <div className="text-[12px] font-bold tabular-nums text-white">{v}</div>
-    </div>
-  );
-}
