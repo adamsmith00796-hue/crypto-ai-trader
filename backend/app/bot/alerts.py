@@ -95,3 +95,18 @@ def notify(paper: dict) -> None:
                 break
             sent.add(key)
             SENT_FILE.write_text(json.dumps(sorted(sent)))
+
+
+def send(text: str) -> bool:
+    """Send one message straight away (used for live orders). Returns False if it couldn't."""
+    creds = _credentials()
+    if not creds:
+        return False
+    token, chat = creds
+    try:
+        httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat, "text": text},
+                   timeout=15).raise_for_status()
+        return True
+    except httpx.HTTPError as e:
+        log.warning("Telegram alert failed: %s", type(e).__name__)
+        return False

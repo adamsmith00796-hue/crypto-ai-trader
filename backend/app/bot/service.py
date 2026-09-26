@@ -12,7 +12,7 @@ import time
 import csv
 import io
 
-from . import alerts, data, engine, news_brake
+from . import alerts, data, engine, live as live_trading, news_brake
 from .strategy import DOTS, all_green, coin_signals, trend_broken
 
 CAPITAL = 200.0
@@ -91,8 +91,12 @@ def _health(paper: dict | None, bt: dict, hold_btc: list, bt_stats: dict) -> dic
             "safety_limit_pct": SAFETY * 100, "bot_6m_pct": bot_6m, "btc_6m_pct": btc_6m}
 
 
+_prep: dict | None = None  # last prepared market data, reused by live trading
+
+
 def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
-    prep = engine.prepare(candles)
+    global _prep
+    prep = _prep = engine.prepare(candles)
     btc = prep["coins"]["BTC"]
     last_t = btc["rows"][-1][0]
 
@@ -180,7 +184,9 @@ async def _refresh_once() -> None:
     global _state
     candles, live = await asyncio.to_thread(data.refresh_all)
     brake = await asyncio.to_thread(news_brake.check)
-    _state = await asyncio.to_thread(build, candles, live, brake)
+    state = await asyncio.to_thread(build, candles, live, brake)
+    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, live, SAFETY, news_brake.brake_days())
+    _state = state
     await asyncio.to_thread(alerts.notify, _state["paper"])
 
 
