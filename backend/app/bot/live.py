@@ -25,7 +25,7 @@ import os
 import time
 from pathlib import Path
 
-from . import alerts, engine
+from . import alerts, engine, moonshot
 from .data import DATA_DIR
 
 ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -35,6 +35,9 @@ ORDER_LOG = DATA_DIR / "live_orders.jsonl"
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
+MAIN_SHARE, MOON_SHARE = 0.8, 0.2  # the real plan: 80% six-dot bot, 20% moonshot pot
+BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
+MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
 # Our coin name -> Hyperliquid spot token (Unit-bridged coins are prefixed with U)
 TOKENS = {"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL", "ZEC": "UZEC", "NEAR": "ONEAR", "HYPE": "HYPE",
@@ -58,27 +61,34 @@ def _day(ms: float) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
 
 
-def _targets(prep: dict, live_candles: dict, start_ms: int, capital: float, **safety) -> tuple[dict[str, float], float, dict]:
-    """USD the rules hold per coin right now (BTC can sit in both sleeves), and the engine's equity."""
-    run = engine.run_account(prep, start_ms, capital, live_candles, **safety)
+def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capital: float,
+             **safety) -> tuple[dict[str, float], float, dict]:
+    """USD the rules hold per coin right now across both pots (a coin can sit in several), the
+    rules' own account value, and the main bot's run (for the safety switch status)."""
+    run = engine.run_account(prep, start_ms, capital * MAIN_SHARE, live_candles, **safety)
+    moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles)
     held: dict[str, float] = {}
-    for p in run["positions"]:
+    for p in run["positions"] + moon["positions"]:
         held[p["coin"]] = held.get(p["coin"], 0.0) + p["value"]
-    equity = run["curve"][-1][1] if run["curve"] else capital
+    equity = (run["curve"][-1][1] if run["curve"] else capital * MAIN_SHARE) + \
+             (moon["curve"][-1][1] if moon["curve"] else capital * MOON_SHARE)
     return held, equity, run
 
 
 def plan_orders(holdings_usd: dict[str, float], usdc: float, targets_usd: dict[str, float]) -> list[dict]:
-    """Entries and exits only, no small rebalancing: sell coins the rules don't hold, buy coins
-    the rules hold that the account is (mostly) missing. Sells first so their USDC funds buys."""
+    """Make the account hold what the rules hold, ignoring small differences (BAND) so price
+    drift doesn't cause fee-burning trades. Sells first so their USDC funds the buys."""
     orders = []
     for coin, have in holdings_usd.items():
-        if targets_usd.get(coin, 0.0) == 0.0 and have >= MIN_ORDER_USD:
+        want = targets_usd.get(coin, 0.0)
+        if want == 0.0 and have >= MIN_ORDER_USD:
             orders.append({"coin": coin, "side": "sell", "usd": have, "all": True})
+        elif want > 0 and have > want * (1 + BAND) and have - want >= MIN_ORDER_USD:
+            orders.append({"coin": coin, "side": "sell", "usd": have - want, "all": False})
     cash = usdc + sum(o["usd"] for o in orders)
     for coin, want in sorted(targets_usd.items(), key=lambda x: -x[1]):
         have = holdings_usd.get(coin, 0.0)
-        if want > 0 and have < 0.5 * want:
+        if want > 0 and have < want * (1 - BAND):
             usd = min(want - have, cash * 0.995)
             if usd >= MIN_ORDER_USD:
                 orders.append({"coin": coin, "side": "buy", "usd": usd, "all": False})
@@ -133,7 +143,7 @@ def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
-def sync(prep: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -> dict:
+def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -> dict:
     """One pass: read the account, work out orders, place them (unless off / dry-run)."""
     cfg = settings()
     mode = cfg["mode"]
@@ -161,7 +171,7 @@ def sync(prep: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -
                 STATE_FILE.write_text(json.dumps(state))
         out["started"] = _day(state["start_ms"])
 
-        targets, engine_equity, run = _targets(prep, live_candles, state["start_ms"], state["capital"], safety=safety,
+        targets, engine_equity, run = _targets(prep, candles, live_candles, state["start_ms"], state["capital"], safety=safety,
                                                safety_from_ms=state.get("safety_reset_ms", state["start_ms"]),
                                                no_buy_days=no_buy_days)
         scale = equity / engine_equity if engine_equity > 0 else 0.0
@@ -180,11 +190,12 @@ def sync(prep: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -
             return out
 
         today = _day(time.time() * 1000)
-        ledger = _load(LEDGER_FILE, [])
+        ledger = _load(LEDGER_FILE, {})  # {"network:day:coin:side": {"done": bool, "tries": n}}
         for o in orders:
             key = f"{network}:{today}:{o['coin']}:{o['side']}"
-            if key in ledger:
-                o["result"] = {"ok": False, "error": "already done today"}
+            entry = ledger.get(key, {"done": False, "tries": 0})
+            if entry["done"] or entry["tries"] >= MAX_TRIES:
+                o["result"] = {"ok": False, "error": "already done today" if entry["done"] else "gave up for today"}
                 continue
             price = px[o["coin"]]
             size = amounts.get(o["coin"], 0.0) if o["all"] else o["usd"] / price
@@ -193,10 +204,11 @@ def sync(prep: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -
             if r["ok"]:
                 alerts.send(f"{'🟢 BUY' if o['side'] == 'buy' else '🔴 SELL'} {o['coin']} ({label})\n"
                             f"{r['size']:g} at ${r['price']:,.4g} = ${r['size'] * r['price']:,.2f}")
-            else:
-                alerts.send(f"⚠️ {label} order FAILED: {o['side']} {o['coin']}\n{r['error']}")
-            ledger.append(key)
-            LEDGER_FILE.write_text(json.dumps(ledger[-500:]))
+            entry = {"done": r["ok"], "tries": entry["tries"] + 1}
+            if not r["ok"]:
+                alerts.send(f"⚠️ {label} order FAILED ({entry['tries']}/{MAX_TRIES}): {o['side']} {o['coin']}\n{r['error']}")
+            ledger[key] = entry
+            LEDGER_FILE.write_text(json.dumps(dict(list(ledger.items())[-500:])))
             with ORDER_LOG.open("a") as f:
                 f.write(json.dumps({"t": time.time(), "network": network, **o}) + "\n")
     except Exception as e:  # never let the live side take the paper bot down
@@ -211,5 +223,5 @@ if __name__ == "__main__":
     from . import data, news_brake, service
     os.environ["HL_MODE"] = "dry-run"
     candles, live_c = data.refresh_all()
-    result = sync(engine.prepare(candles), live_c, service.SAFETY, news_brake.brake_days())
+    result = sync(engine.prepare(candles), candles, live_c, service.SAFETY, news_brake.brake_days())
     json.dump(result, sys.stdout, indent=1, default=str)

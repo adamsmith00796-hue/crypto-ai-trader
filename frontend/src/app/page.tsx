@@ -110,6 +110,7 @@ function Body({ b }: { b: Ready }) {
   const t = b.backtest;
   return (
     <>
+      <LivePanel b={b} />
       <Overview b={b} />
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
         <Panel title="Holding now" sub="Both pots · profit or loss since each buy">
@@ -152,6 +153,47 @@ function Body({ b }: { b: Ready }) {
         <p className="mt-2 text-[10px] text-white/40">Past prices, not a promise. Coin list is today&apos;s, so coins that collapsed are missing.</p>
       </Details>
     </>
+  );
+}
+
+const LIVE_LABEL: Record<string, [string, string]> = {
+  "dry-run": ["DRY RUN · NO ORDERS", CYAN], testnet: ["TESTNET", YELLOW], live: ["LIVE · REAL MONEY", GREEN],
+};
+
+function LivePanel({ b }: { b: Ready }) {
+  const l = b.live;
+  if (!l || l.mode === "off") return null;
+  const [label, color] = LIVE_LABEL[l.mode];
+  const holdings = Object.entries(l.holdings ?? {}).filter(([, v]) => v >= 1).sort((x, y) => y[1] - x[1]);
+  return (
+    <section className="panel p-4" style={{ borderColor: color }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="panel-sub !mt-0">Real Hyperliquid account{l.started ? ` · live since ${l.started}` : ""}</p>
+          <p className="text-[32px] font-bold leading-none tabular-nums text-white">{usd(l.equity ?? 0, 2)}</p>
+          <p className="text-[11px] text-white/50">Cash (USDC) {usd(l.usdc ?? 0, 2)}</p>
+        </div>
+        <span className="rounded px-2 py-1 text-[11px] font-black tracking-wider text-black" style={{ background: color }}>{label}</span>
+      </div>
+      <div className="mt-3 grid gap-3 text-[12px] sm:grid-cols-2">
+        <div>
+          <p className="panel-sub mb-1">Holding</p>
+          {holdings.length ? holdings.map(([c, v]) => (
+            <div key={c} className="flex justify-between tabular-nums"><span className="font-bold">{c}</span><span>{usd(v, 2)}</span></div>
+          )) : <p className="text-white/50">Only cash so far</p>}
+        </div>
+        <div>
+          <p className="panel-sub mb-1">{l.mode === "dry-run" ? "Would place right now" : "Latest orders"}</p>
+          {l.orders?.length ? l.orders.map((o, i) => (
+            <div key={i} className="flex justify-between tabular-nums">
+              <span style={{ color: o.side === "buy" ? GREEN : RED }}>{o.side.toUpperCase()} {o.coin}</span>
+              <span>{usd(o.usd, 2)}{o.result ? (o.result.ok ? " ✓" : " ✗") : ""}</span>
+            </div>
+          )) : <p className="text-white/50">Nothing, already matches the rules</p>}
+        </div>
+      </div>
+      {l.error && <p className="mt-2 text-[11px] text-[var(--red)]">⚠ {l.error}</p>}
+    </section>
   );
 }
 

@@ -131,6 +131,18 @@ export type BotStatus =
         btc_6m_pct: number | null;
       };
       news_brake: { on: boolean; headlines: string[]; crisis_headlines_24h: number };
+      live?: {
+        mode: "off" | "dry-run" | "testnet" | "live";
+        network?: string;
+        started?: string;
+        usdc?: number;
+        equity?: number;
+        holdings?: Record<string, number>;
+        targets?: Record<string, number>;
+        orders?: { coin: string; side: "buy" | "sell"; usd: number; result?: { ok: boolean; size?: number; price?: number; error?: string } }[];
+        halted?: string | null;
+        error?: string | null;
+      };
       moonshot: {
         capital: number;
         start_date: string;

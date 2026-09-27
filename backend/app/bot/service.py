@@ -214,7 +214,7 @@ async def _refresh_once() -> None:
     candles, live = await asyncio.to_thread(data.refresh_all)
     brake = await asyncio.to_thread(news_brake.check)
     state = await asyncio.to_thread(build, candles, live, brake)
-    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, live, SAFETY, news_brake.brake_days())
+    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days())
     _state = state
     await asyncio.to_thread(alerts.notify, _state["paper"])
     await asyncio.to_thread(alerts.notify, _state["moonshot"])
