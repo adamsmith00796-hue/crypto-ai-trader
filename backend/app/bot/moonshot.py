@@ -1,14 +1,16 @@
 """Moonshot pot: small, high-risk breakout bets on speculative Hyperliquid spot coins.
 
-Separate from the six-dot bot, with its own money and rules (backtested 25-27 Sep 2026 on
-mid/small Binance coins: +73%/yr 2021-23, about +6%/yr 2024-on, worst drop about 55%; best of the
-variants tried). Treat the pot as money that can go to zero.
+Separate from the six-dot bot, with its own money and rules. Treat the pot as money that can go to zero.
+
+"Let winners run" version, chosen 27 Sep 2026 when Adam asked for a more aggressive pot: no selling half
+at +100% and a 30% (not 25%) trailing stop. Backtested on mid/small Binance coins it was the only
+aggressive variant that beat the balanced rules on unseen 2024+ data ($200 -> $252 vs $235, worst drop
+59%). Bigger/fewer bets and faster entries only helped in the 2021 mania and nearly wiped out after.
 
   Buy   when a coin closes at a new 20-day high on 2x+ its normal volume, while Bitcoin is above
         its 100-day average. Filled at the next daily open. Up to 5 bets, each 1/5 of the pot.
   Sell  hard stop 15% below entry (any time in the day)
-        take half at +100%
-        trailing stop: a close 25% below the highest close since buying
+        trailing stop: a close 30% below the highest close since buying (winners are left to run)
         time stop: after 30 days if not up at least 10%
 """
 
@@ -17,7 +19,7 @@ from __future__ import annotations
 from . import engine
 
 COINS = ["ENA", "PUMP", "XPL", "PENGU", "KNTQ", "DRV", "HYPE", "ZEC", "NEAR"]
-SLOTS, STOP, TRAIL, TAKE, DAYS_MAX = 5, 0.15, 0.25, 1.0, 30
+SLOTS, STOP, TRAIL, TAKE, DAYS_MAX = 5, 0.15, 0.30, 0.0, 30  # TAKE 0 = never sell half early
 MIN_VOL = 1e6  # average daily dollar volume over 30 days
 COST = 0.003   # fees plus extra slippage on thin coins, each side
 DAY_MS = 86_400_000
@@ -92,7 +94,7 @@ def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) 
         if low <= p["entry"] * (1 - STOP):
             sell(c, 1, min(o, p["entry"] * (1 - STOP)), t, "Hard stop -15%")
             return True
-        if not p["took_half"] and h >= p["entry"] * (1 + TAKE):
+        if TAKE and not p["took_half"] and h >= p["entry"] * (1 + TAKE):
             sell(c, 0.5, max(o, p["entry"] * (1 + TAKE)), t, "Half taken at +100%")
             p["took_half"] = True
         return False
@@ -110,7 +112,7 @@ def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) 
             p["last"] = close
             p["peak"] = max(p["peak"], close)
             if close <= p["peak"] * (1 - TRAIL):
-                sell(c, 1, close, t, "Trailing stop -25%")
+                sell(c, 1, close, t, f"Trailing stop -{TRAIL:.0%}")
             elif p["age"] >= DAYS_MAX and close < p["entry"] * 1.10:
                 sell(c, 1, close, t, "30-day time stop")
         queue = scan(t)

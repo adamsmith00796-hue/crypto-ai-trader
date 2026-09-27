@@ -340,7 +340,7 @@ function MoonshotPanel({ b }: { b: Ready }) {
           <p className="text-[11px] tabular-nums" style={{ color: tone(value - m.capital) }}>{pct(((value - m.capital) / m.capital) * 100)}</p>
           <p className="pt-1 text-[9px] leading-relaxed text-white/45">
             Buys a new 20-day high on 2x volume while Bitcoin is rising. Up to {r.slots} bets. Sells at -{r.stop_pct.toFixed(0)}%,
-            on a close {r.trail_pct.toFixed(0)}% below its peak, half at +{r.take_half_pct.toFixed(0)}%, or after {r.time_stop_days} days if not up 10%.
+            on a close {r.trail_pct.toFixed(0)}% below its peak{r.take_half_pct > 0 ? `, half at +${r.take_half_pct.toFixed(0)}%` : " (winners are left to run)"}, or after {r.time_stop_days} days if not up 10%.
           </p>
         </div>
         <div>
