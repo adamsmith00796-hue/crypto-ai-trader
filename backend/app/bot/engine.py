@@ -17,6 +17,9 @@ MIN_ORDER = 10.0  # Hyperliquid minimum order, USD
 # Stops only count on a daily CLOSE below them, so brief intraday spikes don't shake trades out
 # (Krown TA101 idea; improved every test, see research_notes/Krown TA101 rules.md).
 CLOSE_STOP = True
+# Disaster stop: checked all day (every 5 minutes live), sells if price crashes this far BELOW the
+# normal stop, so a flash crash can't run on until the daily close. Normal dips are left alone.
+DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
 MIN_VOL = 20e6  # a coin must trade $20M a day on average to count as "big"
 
@@ -121,7 +124,10 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             o, _h, low, cl = bar[c][1:5]
             p = pos[c]
             p["last"] = cl
-            if CLOSE_STOP and cl <= p["stop"]:
+            crash = p["stop"] * (1 - DISASTER)
+            if DISASTER and low <= crash:
+                close(c, t, min(o, crash), "Disaster stop")
+            elif CLOSE_STOP and cl <= p["stop"]:
                 close(c, t, cl, "Stop hit")
             elif not CLOSE_STOP and low <= p["stop"]:
                 close(c, t, min(o, p["stop"]), "Stop hit")
@@ -142,7 +148,10 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             for c in list(pos):
                 if c in bar:
                     pos[c]["last"] = bar[c][4]
-                    if not CLOSE_STOP and bar[c][3] <= pos[c]["stop"]:  # close-only stops wait for the close
+                    crash = pos[c]["stop"] * (1 - DISASTER)
+                    if DISASTER and bar[c][3] <= crash:  # a crash is acted on straight away
+                        close(c, t, min(bar[c][1], crash), "Disaster stop")
+                    elif not CLOSE_STOP and bar[c][3] <= pos[c]["stop"]:  # close-only stops wait for the close
                         close(c, t, min(bar[c][1], pos[c]["stop"]), "Stop hit")
             curve.append((t, cash + sum(p["units"] * p["last"] for p in pos.values())))
 
