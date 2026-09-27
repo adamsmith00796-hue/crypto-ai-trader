@@ -42,9 +42,9 @@ export default function Home() {
           <div className="flex h-8 w-8 items-center justify-center rounded bg-[var(--green)] text-xs font-black text-black">6●</div>
           <div>
             <h1 className="text-[15px] font-bold tracking-wide">
-              Six-Dot Bot <span className="text-[var(--green)]">{"// PAPER TRADING"}</span>
+              Six-Dot Bot <span className="text-[var(--green)]">{bot?.ready && bot.live?.mode === "live" ? "// LIVE TRADING" : "// PAPER TRADING"}</span>
             </h1>
-            <p className="panel-sub">Pretend money · runs 24/7 on the server · Hyperliquid spot</p>
+            <p className="panel-sub">{bot?.ready && bot.live?.mode === "live" ? "Real money on Hyperliquid spot · runs 24/7 on the server" : "Pretend money · runs 24/7 on the server · Hyperliquid spot"}</p>
           </div>
         </div>
         <StatusLight bot={bot} err={err} />
@@ -220,7 +220,7 @@ function Overview({ b }: { b: Ready }) {
   return (
     <section className="panel grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
       <div>
-        <p className="panel-sub !mt-0">Total value · pretend money · started {p.start_date}</p>
+        <p className="panel-sub !mt-0">Paper test account · pretend money, same rules · started {p.start_date}</p>
         <p className="glow-green text-[44px] font-bold leading-none tabular-nums sm:text-[56px]" style={{ color: tone(change) }}>{usd(total, 2)}</p>
         <p className="mt-1 text-[14px] font-bold tabular-nums" style={{ color: tone(change) }}>
           {change >= 0 ? "+" : "-"}{usd(Math.abs(change), 2)} ({pct((change / start) * 100)})

@@ -211,6 +211,11 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
             LEDGER_FILE.write_text(json.dumps(dict(list(ledger.items())[-500:])))
             with ORDER_LOG.open("a") as f:
                 f.write(json.dumps({"t": time.time(), "network": network, **o}) + "\n")
+        # show the account as it is after trading, not as it was before
+        usdc, amounts = acct.balances()
+        px = acct.prices()
+        holdings = {c: a * px.get(c, 0.0) for c, a in amounts.items()}
+        out.update(usdc=usdc, holdings=holdings, equity=usdc + sum(holdings.values()))
     except Exception as e:  # never let the live side take the paper bot down
         log.warning("live sync failed: %s", type(e).__name__)
         out["error"] = f"{type(e).__name__}: {e}"[:300]
