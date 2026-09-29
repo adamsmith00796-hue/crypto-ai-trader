@@ -406,6 +406,16 @@ function MoonshotPanel({ b }: { b: Ready }) {
           </table>
         </div>
         <div className="space-y-2">
+          <p className="panel-sub">Breakouts on coins Hyperliquid doesn&apos;t list · {m.elsewhere.day} · alert only</p>
+          {m.elsewhere.breakouts.length ? (
+            <div className="flex flex-wrap gap-1">
+              {m.elsewhere.breakouts.map((h) => (
+                <span key={h.coin} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[10px] tabular-nums" title={`Closed ${price(h.close)}, ${h.volume_x}x volume, hard stop ${price(h.stop)}`}>
+                  <b>{h.coin}</b> <span style={{ color: tone(h.gain_1d_pct) }}>{pct(h.gain_1d_pct, 0)}</span>
+                </span>
+              ))}
+            </div>
+          ) : <p className="text-[11px] text-white/50">None on the last daily close</p>}
           <p className="panel-sub">Bets</p>
           <PositionTable rows={m.positions} />
           {m.trades.length > 0 && <TradeTable rows={m.trades.slice(0, 8)} />}

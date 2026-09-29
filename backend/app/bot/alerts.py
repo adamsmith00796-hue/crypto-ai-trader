@@ -98,6 +98,26 @@ def notify(paper: dict) -> None:
             SENT_FILE.write_text(json.dumps(sorted(sent)))
 
 
+def notify_breakouts(scan: dict) -> None:
+    """One Telegram message per new breakout on a coin Hyperliquid doesn't list (alert only)."""
+    if not scan.get("breakouts") or not _credentials():
+        return
+    sent = set(json.loads(SENT_FILE.read_text())) if SENT_FILE.exists() else set()
+    for h in scan["breakouts"][:3]:  # the 3 strongest per day; the rest are on the dashboard
+        key = f"breakout:{h['coin']}:{h['day']}"
+        if key in sent:
+            continue
+        text = (f"🚀 BREAKOUT ALERT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
+                f"Closed at {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% on the day), a new 20-day high on "
+                f"{h['volume_x']:g}x normal volume.\n"
+                f"Moonshot rules would buy at the next open, hard stop -15% ({_money(h['stop'])}), then trail 30% below the peak.\n"
+                + ("Bitcoin is in an uptrend ✅" if scan["btc_uptrend"] else "⚠️ Bitcoin is NOT in an uptrend, the rules would skip this")
+                + "\nYour call, most breakouts fizzle. Not advice.")
+        if send(text):
+            sent.add(key)
+            SENT_FILE.write_text(json.dumps(sorted(sent)))
+
+
 def send(text: str) -> bool:
     """Send one message straight away (used for live orders). Returns False if it couldn't."""
     creds = _credentials()

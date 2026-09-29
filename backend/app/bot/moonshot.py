@@ -149,3 +149,24 @@ def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) 
     return {"curve": curve, "trades": trades, "positions": open_pos, "cash": cash, "watch": watch,
             "pending": [{"action": "buy", "coin": c, "sleeve": "moonshot"} for c in queue],
             "btc_uptrend": bool(btc_up.get(last_btc)), "halted": None}
+
+
+def elsewhere(candles: dict) -> dict:
+    """Breakouts by the same rule on coins Hyperliquid doesn't list (alert only, never traded).
+    Checked on the last closed daily candle across the top-100 Binance coins."""
+    from .live import TOKENS
+    btc_rows = candles["BTC"]
+    btc_up = _btc_up(btc_rows).get(btc_rows[-1][0], False)
+    day = btc_rows[-1][0]
+    hits = []
+    for coin, rows in candles.items():
+        if coin in COINS or coin in TOKENS or not rows or rows[-1][0] != day:
+            continue
+        s = _setup(rows, len(rows) - 1)
+        if s and s["breakout"]:
+            close = rows[-1][4]
+            hits.append({"coin": coin, "close": close, "volume_x": round(s["vol_x"], 1),
+                         "gain_1d_pct": round((close / rows[-2][4] - 1) * 100, 1),
+                         "stop": close * (1 - STOP), "day": engine._day(day)})
+    hits.sort(key=lambda h: -h["volume_x"])
+    return {"btc_uptrend": btc_up, "day": engine._day(day), "breakouts": hits}
