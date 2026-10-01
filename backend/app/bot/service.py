@@ -220,6 +220,7 @@ async def _refresh_once() -> None:
     await asyncio.to_thread(alerts.notify, _state["paper"])
     await asyncio.to_thread(alerts.notify, _state["moonshot"])
     await asyncio.to_thread(alerts.notify_breakouts, _state["moonshot"]["elsewhere"])
+    await asyncio.to_thread(alerts.notify_breakout_sells, candles, live)
 
 
 async def refresh_loop() -> None:

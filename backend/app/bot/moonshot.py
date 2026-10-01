@@ -167,7 +167,7 @@ def elsewhere(candles: dict, live: dict | None = None) -> dict:
         close = rows[-1][4]
         return {"coin": coin, "close": close, "volume_x": round(s["vol_x"], 1),
                 "gain_1d_pct": round((close / rows[-2][4] - 1) * 100, 1),
-                "stop": close * (1 - STOP), "day": engine._day(rows[-1][0])}
+                "stop": close * (1 - STOP), "day": engine._day(rows[-1][0]), "t": rows[-1][0]}
 
     hits, early = [], []
     for coin, rows in candles.items():
@@ -185,3 +185,25 @@ def elsewhere(candles: dict, live: dict | None = None) -> dict:
     hits.sort(key=lambda h: -h["volume_x"])
     early.sort(key=lambda h: -h["volume_x"])
     return {"btc_uptrend": btc_up, "day": engine._day(day), "breakouts": hits, "early": early}
+
+
+def exit_signal(rows: list[list[float]], now: list[float] | None, entry: float, alert_t: int, early: bool) -> str | None:
+    """For a breakout alert bought by hand at `entry`: why the moonshot sell rules would be out by
+    now, or None if they'd still hold. alert_t is the daily candle the alert was on; an early alert
+    came before that candle closed, so its close counts, but its low (mostly before the alert) doesn't."""
+    stop, peak, age = entry * (1 - STOP), entry, 0
+    hard = f"it fell to the hard stop, {STOP:.0%} below the alert price"
+    for r in rows:
+        if r[0] < alert_t or (r[0] == alert_t and not early):
+            continue
+        if r[0] > alert_t and r[3] <= stop:
+            return hard
+        age += 1
+        peak = max(peak, r[4])
+        if r[4] <= peak * (1 - TRAIL):
+            return f"it closed {TRAIL:.0%} below its highest close since the alert"
+        if age >= DAYS_MAX and r[4] < entry * 1.10:
+            return f"{DAYS_MAX} days have passed without a 10% gain"
+    if now and now[0] >= alert_t and (now[4] <= stop or (now[0] > alert_t and now[3] <= stop)):
+        return hard
+    return None

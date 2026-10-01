@@ -17,13 +17,16 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from .data import DATA_DIR
+from . import moonshot
+from .data import DATA_DIR, update_coin
 
 ENV_FILES = [Path(__file__).resolve().parent.parent.parent / ".env", Path.home() / "telegram-claude-bot" / ".env"]
 SENT_FILE = DATA_DIR / "alerts_sent.json"
 LOCAL_TZ = ZoneInfo("Australia/Sydney")
 WAKE_HOUR, SLEEP_HOUR = 7, 22  # early breakout alerts are held overnight and sent from 7am
 BREAKOUTS_PER_DAY = 3
+WATCH_FILE = DATA_DIR / "breakout_watch.json"  # breakout alerts sent, followed until their sell signal
+FOLLOW_UP = "If you buy it, I'll message you when the rules say sell."
 log = logging.getLogger(__name__)
 
 
@@ -114,12 +117,16 @@ def _breakout_text(h: dict, btc_uptrend: bool) -> str:
                 f"{h['volume_x']:g}x a normal day's volume.\n"
                 f"Not confirmed yet: the day closes at {closes.strftime('%-I%p').lower()}, {hours:.0f} hours away, and it can fall back before then.\n"
                 f"Moonshot rules would put the hard stop 15% lower ({_money(h['stop'])}), then trail 30% below the peak.\n"
-                f"{btc}\nYour call, most breakouts fizzle. Not advice.")
+                f"{btc}\nYour call, most breakouts fizzle. Not advice.\n{FOLLOW_UP}")
     return (f"🚀 BREAKOUT ALERT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
             f"Closed at {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% on the day), a new 20-day high on "
             f"{h['volume_x']:g}x normal volume.\n"
             f"Moonshot rules would buy at the next open, hard stop -15% ({_money(h['stop'])}), then trail 30% below the peak.\n"
-            f"{btc}\nYour call, most breakouts fizzle. Not advice.")
+            f"{btc}\nYour call, most breakouts fizzle. Not advice.\n{FOLLOW_UP}")
+
+
+def _watch() -> dict:
+    return json.loads(WATCH_FILE.read_text()) if WATCH_FILE.exists() else {}
 
 
 def notify_breakouts(scan: dict) -> None:
@@ -140,6 +147,35 @@ def notify_breakouts(scan: dict) -> None:
         if send(_breakout_text(h, scan["btc_uptrend"])):
             sent.add(key)
             SENT_FILE.write_text(json.dumps(sorted(sent)))
+            watch = _watch()  # followed until the sell rules trigger; a repeat alert keeps the first entry
+            watch.setdefault(h["coin"], {"entry": h["close"], "t": h["t"], "early": "closes_ms" in h, "day": h["day"]})
+            WATCH_FILE.write_text(json.dumps(watch))
+
+
+def notify_breakout_sells(candles: dict, live: dict) -> None:
+    """Follow-up for every breakout alert sent: one SELL SIGNAL message when the moonshot sell rules
+    (hard stop, trailing stop, time stop) would be out, in case the coin was bought by hand. The hard
+    stop is checked on the current price every refresh and is sent at any hour."""
+    watch = _watch()
+    for coin, w in list(watch.items()):
+        rows, now = candles.get(coin), live.get(coin)
+        if rows is None:  # dropped out of the top 100 since the alert: fetch it on its own
+            try:
+                with httpx.Client() as client:
+                    rows, now = update_coin(client, coin)
+            except httpx.HTTPError:
+                continue
+        why = moonshot.exit_signal(rows, now, w["entry"], w["t"], w["early"])
+        if not why:
+            continue
+        price = now[4] if now else rows[-1][4]
+        text = (f"🔔 SELL SIGNAL: {coin} (breakout alert from {w['day']})\n"
+                f"Alert price {_money(w['entry'])}, now {_money(price)} ({(price / w['entry'] - 1) * 100:+.0f}%).\n"
+                f"Why: {why}.\n"
+                "If you bought it, the moonshot rules say sell now. If you didn't, ignore this. Not advice.")
+        if send(text):
+            del watch[coin]
+            WATCH_FILE.write_text(json.dumps(watch))
 
 
 def send(text: str) -> bool:
