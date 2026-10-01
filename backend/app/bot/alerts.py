@@ -30,21 +30,30 @@ FOLLOW_UP = "If you buy it, I'll message you when the rules say sell."
 log = logging.getLogger(__name__)
 
 
+def _env(f: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for line in f.read_text().splitlines() if f.exists() else []:
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip().strip('"').strip("'")
+    return env
+
+
 def _credentials() -> tuple[str, str] | None:
     for f in ENV_FILES:
-        if not f.exists():
-            continue
-        env: dict[str, str] = {}
-        for line in f.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip().strip('"').strip("'")
+        env = _env(f)
         token = os.environ.get("TELEGRAM_BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN")
         chat = os.environ.get("TELEGRAM_CHAT_ID") or env.get("TELEGRAM_CHAT_ID")
         if token and chat:
             return token, chat
     return None
+
+
+def _shared_chat() -> str | None:
+    """Optional Telegram channel shared with friends (TELEGRAM_SHARED_CHAT_ID in backend/.env). It gets
+    the breakout alerts and their sell signals only, never the account's own buys and sells."""
+    return os.environ.get("TELEGRAM_SHARED_CHAT_ID") or _env(ENV_FILES[0]).get("TELEGRAM_SHARED_CHAT_ID")
 
 
 def _money(x: float) -> str:
@@ -144,7 +153,7 @@ def notify_breakouts(scan: dict) -> None:
         key = f"breakout:{h['coin']}:{h['day']}"
         if key in sent or sum(k.startswith("breakout:") and k.endswith(f":{h['day']}") for k in sent) >= BREAKOUTS_PER_DAY:
             continue
-        if send(_breakout_text(h, scan["btc_uptrend"])):
+        if send(_breakout_text(h, scan["btc_uptrend"]), shared=True):
             sent.add(key)
             SENT_FILE.write_text(json.dumps(sorted(sent)))
             watch = _watch()  # followed until the sell rules trigger; a repeat alert keeps the first entry
@@ -173,21 +182,26 @@ def notify_breakout_sells(candles: dict, live: dict) -> None:
                 f"Alert price {_money(w['entry'])}, now {_money(price)} ({(price / w['entry'] - 1) * 100:+.0f}%).\n"
                 f"Why: {why}.\n"
                 "If you bought it, the moonshot rules say sell now. If you didn't, ignore this. Not advice.")
-        if send(text):
+        if send(text, shared=True):
             del watch[coin]
             WATCH_FILE.write_text(json.dumps(watch))
 
 
-def send(text: str) -> bool:
-    """Send one message straight away (used for live orders). Returns False if it couldn't."""
+def send(text: str, shared: bool = False) -> bool:
+    """Send one message straight away (used for live orders). Returns False if it couldn't.
+    shared=True also posts it to the shared channel, if one is set; a failure there is only logged."""
     creds = _credentials()
     if not creds:
         return False
     token, chat = creds
-    try:
-        httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat, "text": text},
-                   timeout=15).raise_for_status()
-        return True
-    except httpx.HTTPError as e:
-        log.warning("Telegram alert failed: %s", type(e).__name__)
-        return False
+    ok = False
+    for to in [chat] + ([_shared_chat()] if shared and _shared_chat() else []):
+        try:
+            httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": to, "text": text},
+                       timeout=15).raise_for_status()
+            ok = ok or to == chat
+        except httpx.HTTPError as e:
+            log.warning("Telegram alert failed: %s", type(e).__name__)
+            if to == chat:
+                return False
+    return ok
