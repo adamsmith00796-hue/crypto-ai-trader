@@ -154,7 +154,7 @@ export type BotStatus =
         cash: number;
         watch: { coin: string; price: number; status: "IN TRADE" | "BUY" | "WATCHING"; to_breakout_pct: number | null; volume_x: number | null; thin: boolean }[];
         btc_uptrend: boolean;
-        elsewhere: { btc_uptrend: boolean; day: string; breakouts: { coin: string; close: number; volume_x: number; gain_1d_pct: number; stop: number; day: string }[] };
+        elsewhere: { btc_uptrend: boolean; day: string; breakouts: { coin: string; close: number; volume_x: number; gain_1d_pct: number; stop: number; day: string }[]; early: { coin: string; close: number; volume_x: number; gain_1d_pct: number; stop: number; day: string; closes_ms: number }[] };
         rules: { slots: number; stop_pct: number; trail_pct: number; take_half_pct: number; time_stop_days: number };
       };
       backtest: {

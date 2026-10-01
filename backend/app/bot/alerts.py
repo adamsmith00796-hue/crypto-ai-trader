@@ -10,7 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -18,6 +21,9 @@ from .data import DATA_DIR
 
 ENV_FILES = [Path(__file__).resolve().parent.parent.parent / ".env", Path.home() / "telegram-claude-bot" / ".env"]
 SENT_FILE = DATA_DIR / "alerts_sent.json"
+LOCAL_TZ = ZoneInfo("Australia/Sydney")
+WAKE_HOUR, SLEEP_HOUR = 7, 22  # early breakout alerts are held overnight and sent from 7am
+BREAKOUTS_PER_DAY = 3
 log = logging.getLogger(__name__)
 
 
@@ -98,22 +104,40 @@ def notify(paper: dict) -> None:
             SENT_FILE.write_text(json.dumps(sorted(sent)))
 
 
+def _breakout_text(h: dict, btc_uptrend: bool) -> str:
+    btc = "Bitcoin is in an uptrend ✅" if btc_uptrend else "⚠️ Bitcoin is NOT in an uptrend, the rules would skip this"
+    if "closes_ms" in h:  # today's candle, still forming
+        closes = datetime.fromtimestamp(h["closes_ms"] / 1000, LOCAL_TZ)
+        hours = max((h["closes_ms"] / 1000 - time.time()) / 3600, 0)
+        return (f"⏰ EARLY BREAKOUT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
+                f"Now {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% today), above its 20-day high and already on "
+                f"{h['volume_x']:g}x a normal day's volume.\n"
+                f"Not confirmed yet: the day closes at {closes.strftime('%-I%p').lower()}, {hours:.0f} hours away, and it can fall back before then.\n"
+                f"Moonshot rules would put the hard stop 15% lower ({_money(h['stop'])}), then trail 30% below the peak.\n"
+                f"{btc}\nYour call, most breakouts fizzle. Not advice.")
+    return (f"🚀 BREAKOUT ALERT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
+            f"Closed at {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% on the day), a new 20-day high on "
+            f"{h['volume_x']:g}x normal volume.\n"
+            f"Moonshot rules would buy at the next open, hard stop -15% ({_money(h['stop'])}), then trail 30% below the peak.\n"
+            f"{btc}\nYour call, most breakouts fizzle. Not advice.")
+
+
 def notify_breakouts(scan: dict) -> None:
-    """One Telegram message per new breakout on a coin Hyperliquid doesn't list (alert only)."""
-    if not scan.get("breakouts") or not _credentials():
+    """Telegram alerts for breakouts on coins Hyperliquid doesn't list (alert only), at most
+    BREAKOUTS_PER_DAY per daily candle; the rest are on the dashboard.
+
+    Early alerts go out as soon as a coin qualifies on today's unfinished candle, but only between
+    WAKE_HOUR and SLEEP_HOUR local time, so anything that broke out overnight arrives at 7am.
+    A coin alerted early is not alerted again when that day closes."""
+    if not _credentials():
         return
     sent = set(json.loads(SENT_FILE.read_text())) if SENT_FILE.exists() else set()
-    for h in scan["breakouts"][:3]:  # the 3 strongest per day; the rest are on the dashboard
+    awake = WAKE_HOUR <= datetime.now(LOCAL_TZ).hour < SLEEP_HOUR
+    for h in scan.get("breakouts", []) + (scan.get("early", []) if awake else []):
         key = f"breakout:{h['coin']}:{h['day']}"
-        if key in sent:
+        if key in sent or sum(k.startswith("breakout:") and k.endswith(f":{h['day']}") for k in sent) >= BREAKOUTS_PER_DAY:
             continue
-        text = (f"🚀 BREAKOUT ALERT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
-                f"Closed at {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% on the day), a new 20-day high on "
-                f"{h['volume_x']:g}x normal volume.\n"
-                f"Moonshot rules would buy at the next open, hard stop -15% ({_money(h['stop'])}), then trail 30% below the peak.\n"
-                + ("Bitcoin is in an uptrend ✅" if scan["btc_uptrend"] else "⚠️ Bitcoin is NOT in an uptrend, the rules would skip this")
-                + "\nYour call, most breakouts fizzle. Not advice.")
-        if send(text):
+        if send(_breakout_text(h, scan["btc_uptrend"])):
             sent.add(key)
             SENT_FILE.write_text(json.dumps(sorted(sent)))
 

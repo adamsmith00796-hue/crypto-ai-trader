@@ -416,6 +416,18 @@ function MoonshotPanel({ b }: { b: Ready }) {
               ))}
             </div>
           ) : <p className="text-[11px] text-white/50">None on the last daily close</p>}
+          {m.elsewhere.early.length > 0 && (
+            <>
+              <p className="panel-sub">Breaking out today · not confirmed until the daily close</p>
+              <div className="flex flex-wrap gap-1">
+                {m.elsewhere.early.map((h) => (
+                  <span key={h.coin} className="rounded border border-dashed border-[var(--line)] px-1.5 py-0.5 text-[10px] tabular-nums" title={`Now ${price(h.close)}, ${h.volume_x}x volume so far, hard stop ${price(h.stop)}`}>
+                    <b>{h.coin}</b> <span style={{ color: tone(h.gain_1d_pct) }}>{pct(h.gain_1d_pct, 0)}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
           <p className="panel-sub">Bets</p>
           <PositionTable rows={m.positions} />
           {m.trades.length > 0 && <TradeTable rows={m.trades.slice(0, 8)} />}

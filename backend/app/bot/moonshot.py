@@ -151,22 +151,37 @@ def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) 
             "btc_uptrend": bool(btc_up.get(last_btc)), "halted": None}
 
 
-def elsewhere(candles: dict) -> dict:
+def elsewhere(candles: dict, live: dict | None = None) -> dict:
     """Breakouts by the same rule on coins Hyperliquid doesn't list (alert only, never traded).
-    Checked on the last closed daily candle across the top-100 Binance coins."""
+    Checked on the last closed daily candle across the top-100 Binance coins.
+
+    `early` is the same check on today's still-forming candle: the price is already above the
+    20-day high and the day has already traded 2x a normal full day's volume. Volume can only
+    grow, so the one thing that can still undo it before the close is the price falling back."""
     from .live import TOKENS
     btc_rows = candles["BTC"]
     btc_up = _btc_up(btc_rows).get(btc_rows[-1][0], False)
     day = btc_rows[-1][0]
-    hits = []
+
+    def hit(coin: str, rows: list[list[float]], s: dict) -> dict:
+        close = rows[-1][4]
+        return {"coin": coin, "close": close, "volume_x": round(s["vol_x"], 1),
+                "gain_1d_pct": round((close / rows[-2][4] - 1) * 100, 1),
+                "stop": close * (1 - STOP), "day": engine._day(rows[-1][0])}
+
+    hits, early = [], []
     for coin, rows in candles.items():
         if coin in COINS or coin in TOKENS or not rows or rows[-1][0] != day:
             continue
         s = _setup(rows, len(rows) - 1)
         if s and s["breakout"]:
-            close = rows[-1][4]
-            hits.append({"coin": coin, "close": close, "volume_x": round(s["vol_x"], 1),
-                         "gain_1d_pct": round((close / rows[-2][4] - 1) * 100, 1),
-                         "stop": close * (1 - STOP), "day": engine._day(day)})
+            hits.append(hit(coin, rows, s))
+        now = live.get(coin) if live else None
+        if now and now[0] > day:
+            forming = rows + [now]
+            s = _setup(forming, len(forming) - 1)
+            if s and s["breakout"]:
+                early.append({**hit(coin, forming, s), "closes_ms": now[0] + DAY_MS})
     hits.sort(key=lambda h: -h["volume_x"])
-    return {"btc_uptrend": btc_up, "day": engine._day(day), "breakouts": hits}
+    early.sort(key=lambda h: -h["volume_x"])
+    return {"btc_uptrend": btc_up, "day": engine._day(day), "breakouts": hits, "early": early}

@@ -187,7 +187,7 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
             "cash": moon["cash"],
             "watch": moon["watch"],
             "btc_uptrend": moon["btc_uptrend"],
-            "elsewhere": moonshot.elsewhere(candles),
+            "elsewhere": moonshot.elsewhere(candles, live),
             "halted": None,
             "rules": {"slots": moonshot.SLOTS, "stop_pct": moonshot.STOP * 100, "trail_pct": moonshot.TRAIL * 100,
                       "take_half_pct": moonshot.TAKE * 100, "time_stop_days": moonshot.DAYS_MAX},
