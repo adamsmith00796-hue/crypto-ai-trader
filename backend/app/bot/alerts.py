@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import moonshot
+from . import coininfo, moonshot
 from .data import DATA_DIR, update_coin
 
 ENV_FILES = [Path(__file__).resolve().parent.parent.parent / ".env", Path.home() / "telegram-claude-bot" / ".env"]
@@ -118,16 +118,17 @@ def notify(paper: dict) -> None:
 
 def _breakout_text(h: dict, btc_uptrend: bool) -> str:
     btc = "Bitcoin is in an uptrend ✅" if btc_uptrend else "⚠️ Bitcoin is NOT in an uptrend, the rules would skip this"
+    name, network = coininfo.describe(h["coin"])
     if "closes_ms" in h:  # today's candle, still forming
         closes = datetime.fromtimestamp(h["closes_ms"] / 1000, LOCAL_TZ)
         hours = max((h["closes_ms"] / 1000 - time.time()) / 3600, 0)
-        return (f"⏰ EARLY BREAKOUT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
+        return (f"⏰ EARLY BREAKOUT: {h['coin']}{name} (not on Hyperliquid, the bot can't trade it)\n{network}"
                 f"Now {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% today), above its 20-day high and already on "
                 f"{h['volume_x']:g}x a normal day's volume.\n"
                 f"Not confirmed yet: the day closes at {closes.strftime('%-I%p').lower()}, {hours:.0f} hours away, and it can fall back before then.\n"
                 f"Moonshot rules would put the hard stop 15% lower ({_money(h['stop'])}), then trail 30% below the peak.\n"
                 f"{btc}\nYour call, most breakouts fizzle. Not advice.\n{FOLLOW_UP}")
-    return (f"🚀 BREAKOUT ALERT: {h['coin']} (not on Hyperliquid, the bot can't trade it)\n"
+    return (f"🚀 BREAKOUT ALERT: {h['coin']}{name} (not on Hyperliquid, the bot can't trade it)\n{network}"
             f"Closed at {_money(h['close'])} ({h['gain_1d_pct']:+.1f}% on the day), a new 20-day high on "
             f"{h['volume_x']:g}x normal volume.\n"
             f"Moonshot rules would buy at the next open, hard stop -15% ({_money(h['stop'])}), then trail 30% below the peak.\n"
@@ -178,7 +179,7 @@ def notify_breakout_sells(candles: dict, live: dict) -> None:
         if not why:
             continue
         price = now[4] if now else rows[-1][4]
-        text = (f"🔔 SELL SIGNAL: {coin} (breakout alert from {w['day']})\n"
+        text = (f"🔔 SELL SIGNAL: {coin}{coininfo.describe(coin)[0]}, breakout alert from {w['day']}\n"
                 f"Alert price {_money(w['entry'])}, now {_money(price)} ({(price / w['entry'] - 1) * 100:+.0f}%).\n"
                 f"Why: {why}.\n"
                 "If you bought it, the moonshot rules say sell now. If you didn't, ignore this. Not advice.")
