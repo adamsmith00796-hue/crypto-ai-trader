@@ -12,7 +12,7 @@ import time
 import csv
 import io
 
-from . import alerts, bigposts, data, engine, live as live_trading, moonshot, news_brake
+from . import alerts, bigposts, data, engine, holdings_watch, live as live_trading, moonshot, news_brake
 from .strategy import DOTS, all_green, coin_signals, trend_broken
 
 CAPITAL = 800.0  # main six-dot bot; the real plan is $800 here + $200 moonshot
@@ -219,8 +219,9 @@ async def _refresh_once() -> None:
     _state = state
     await asyncio.to_thread(alerts.notify, _state["paper"])
     await asyncio.to_thread(alerts.notify, _state["moonshot"])
-    await asyncio.to_thread(alerts.notify_breakouts, _state["moonshot"]["elsewhere"])
-    await asyncio.to_thread(alerts.notify_breakout_sells, candles, live)
+    # Breakout alerts and their sell signals were switched off on 10 Oct 2026 at Adam's request (trading
+    # them by hand wasn't working for him); the breakouts still show on the dashboard.
+    await asyncio.to_thread(holdings_watch.notify)
     await asyncio.to_thread(bigposts.notify, live)
 
 
