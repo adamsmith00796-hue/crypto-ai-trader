@@ -70,7 +70,7 @@ def _buy_text(p: dict) -> str:
     return (f"🟢 BUY {p['coin']} ({_where(p)})\n"
             f"Price {_money(p['entry_price'])} · amount {_money(p['cost'])}\n"
             + (f"Hard stop {_money(p['stop'])} · 20-day breakout on big volume" if p["sleeve"] == "moonshot"
-               else f"Stop {_money(p['stop'])} · all six dots green"))
+               else f"Stop {_money(p['stop'])} · trend dots green"))
 
 
 def _sell_text(t: dict) -> str:

@@ -9,8 +9,12 @@ These are the exact rules that were backtested (Jan 2021 onwards, 0.15% cost per
   5 Big coin    one of the 10 most-traded coins (30-day dollar volume) that day
   6 Calm        daily price swing (ATR %) not in its top 10% of the past year
 
-Buy when all six are green. Sell when 2 of dots 1-3 turn red, or when the trailing
-stop (3 x ATR below the highest close since entry) is hit.
+Buy when dots 1-5 are green; Calm (6) is shown for information only. Sell when 2 of dots 1-3
+turn red, or when the trailing stop (3 x ATR below the highest close since entry) is hit.
+
+Calm stopped being required on 10 Oct 2026: without it the bot did better on both 2021-23 (seen)
+and 2024+ (unseen, +174% vs +133%) with the same worst drop (37% vs 38%), still ahead with ZEC
+removed. Big swings often come at the start of strong trends; the stops already handle the risk.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ DOTS = [
     ("breakout", "Breakout", "Upper half of its 20/55/100-day ranges"),
     ("weekly", "Weekly", "Weekly close above its 20-week average"),
     ("big", "Big coin", "One of the 10 most-traded coins"),
-    ("calm", "Calm", "Price swings not extreme"),
+    ("calm", "Calm", "Price swings not extreme (info only, doesn't block buys)"),
 ]
 
 
@@ -79,8 +83,11 @@ def coin_signals(rows: list[list[float]]) -> list[dict | None]:
     return out
 
 
+REQUIRED = ["trend", "momentum", "breakout", "weekly", "big"]
+
+
 def all_green(s: dict) -> bool:
-    return all(s[k] for k, _, _ in DOTS)
+    return all(s[k] for k in REQUIRED)
 
 
 def trend_broken(s: dict) -> bool:

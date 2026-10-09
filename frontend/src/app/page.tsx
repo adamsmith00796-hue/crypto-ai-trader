@@ -93,7 +93,7 @@ function StatusLight({ bot, err }: { bot: BotStatus | null; err: string | null }
     const coins = Array.from(new Set(bot.paper.positions.map((p) => p.coin))).join(", ");
     [color, label, detail] = [GREEN, "TRADING", `In ${coins}`];
   } else if (bot?.ready) {
-    [color, label, detail] = [RED, "NOT IN A TRADE", "Running, holding cash until all six dots are green"];
+    [color, label, detail] = [RED, "NOT IN A TRADE", "Running, holding cash until the first five dots are green"];
   }
   return (
     <div role="status" aria-live="polite" className="flex items-center gap-2.5 rounded border px-3 py-1.5" style={{ borderColor: color, background: `${color}14` }}>
