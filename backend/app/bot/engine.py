@@ -19,6 +19,7 @@ MIN_ORDER = 10.0  # Hyperliquid minimum order, USD
 CLOSE_STOP = True
 # Disaster stop: checked all day (every 5 minutes live), sells if price crashes this far BELOW the
 # normal stop, so a flash crash can't run on until the daily close. Normal dips are left alone.
+ATR_MULT = 3.0  # trailing stop distance, in average daily ranges (ATR)
 DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
 MIN_VOL = 20e6  # a coin must trade $20M a day on average to count as "big"
@@ -95,7 +96,7 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
                 slot = min(cash, equity / K)
                 if slot > MIN_ORDER:
                     cash -= slot
-                    stop = o - 3 * prev_sig[c]["atr"]
+                    stop = o - ATR_MULT * prev_sig[c]["atr"]
                     pos[c] = {"units": slot * (1 - COST) / o, "cost": slot, "entry": o, "t": t, "high": o,
                               "stop": stop, "stop0": stop, "last": o}
 
@@ -133,7 +134,7 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
                 close(c, t, min(o, p["stop"]), "Stop hit")
             else:
                 p["high"] = max(p["high"], cl)
-                p["stop"] = max(p["stop"], p["high"] - 3 * sig(c, t)["atr"])
+                p["stop"] = max(p["stop"], p["high"] - ATR_MULT * sig(c, t)["atr"])
         queue = scan(t)
         prev = t
         curve.append((t, cash + sum(p["units"] * p["last"] for p in pos.values())))
