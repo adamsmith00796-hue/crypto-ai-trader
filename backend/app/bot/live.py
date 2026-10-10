@@ -35,9 +35,12 @@ ORDER_LOG = DATA_DIR / "live_orders.jsonl"
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
-# 100% main bot since 10 Oct 2026: small-coin breakouts (the moonshot pot) lost money on unseen 2024+
-# data in every version tested (-63% to -79%), while the main bot made +174%. Was 0.8 / 0.2.
-MAIN_SHARE, MOON_SHARE = 1.0, 0.0
+# Moonshot pot retired 10 Oct 2026: small-coin breakouts lost money on unseen 2024+ data in every version
+# tested (-63% to -79%) while the main bot made +174%. It makes no new buys from MOON_STOPPED_MS; bets
+# it already holds (PUMP) are kept at their current size until the moonshot sell rules exit them, at Adam's
+# request. Everything else follows the main bot at 100%.
+MOON_SHARE = 0.2  # only to replay the old pot's open bets to their exit
+MOON_STOPPED_MS = 1791590400000  # 2026-10-10
 BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
@@ -64,17 +67,16 @@ def _day(ms: float) -> str:
 
 
 def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capital: float,
-             **safety) -> tuple[dict[str, float], float, dict]:
-    """USD the rules hold per coin right now across both pots (a coin can sit in several), the
-    rules' own account value, and the main bot's run (for the safety switch status)."""
-    run = engine.run_account(prep, start_ms, capital * MAIN_SHARE, live_candles, **safety)
-    moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles) if MOON_SHARE else {"positions": [], "curve": []}
+             **safety) -> tuple[dict[str, float], float, dict, set[str]]:
+    """USD the main bot holds per coin right now, its own account value, its run (for the safety switch
+    status), and the coins the retired moonshot pot still holds (kept as they are until they exit)."""
+    run = engine.run_account(prep, start_ms, capital, live_candles, **safety)
+    moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles, no_new_after=MOON_STOPPED_MS)
     held: dict[str, float] = {}
-    for p in run["positions"] + moon["positions"]:
+    for p in run["positions"]:
         held[p["coin"]] = held.get(p["coin"], 0.0) + p["value"]
-    equity = (run["curve"][-1][1] if run["curve"] else capital * MAIN_SHARE) + \
-             (moon["curve"][-1][1] if moon["curve"] else capital * MOON_SHARE)
-    return held, equity, run
+    equity = run["curve"][-1][1] if run["curve"] else capital
+    return held, equity, run, {p["coin"] for p in moon["positions"]}
 
 
 def plan_orders(holdings_usd: dict[str, float], usdc: float, targets_usd: dict[str, float]) -> list[dict]:
@@ -173,11 +175,14 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
                 STATE_FILE.write_text(json.dumps(state))
         out["started"] = _day(state["start_ms"])
 
-        targets, engine_equity, run = _targets(prep, candles, live_candles, state["start_ms"], state["capital"], safety=safety,
-                                               safety_from_ms=state.get("safety_reset_ms", state["start_ms"]),
-                                               no_buy_days=no_buy_days)
-        scale = equity / engine_equity if engine_equity > 0 else 0.0
+        targets, engine_equity, run, keep = _targets(prep, candles, live_candles, state["start_ms"], state["capital"],
+                                                     safety=safety, no_buy_days=no_buy_days,
+                                                     safety_from_ms=state.get("safety_reset_ms", state["start_ms"]))
+        kept = {c: holdings.get(c, 0.0) for c in keep}  # old moonshot bets: hold as they are
+        scale = (equity - sum(kept.values())) / engine_equity if engine_equity > 0 else 0.0
         targets_usd = {c: v * scale for c, v in targets.items() if acct is None or c in px}
+        for c, v in kept.items():
+            targets_usd[c] = targets_usd.get(c, 0.0) + v
         out.update(targets=targets_usd, halted=run["halted"])
         orders = plan_orders(holdings, usdc, targets_usd)
         out["orders"] = orders

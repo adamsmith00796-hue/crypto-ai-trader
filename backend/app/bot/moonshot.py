@@ -43,7 +43,9 @@ def _setup(rows: list[list[float]], k: int) -> dict | None:
             "gain20": close / rows[k - 20][4] - 1}
 
 
-def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) -> dict:
+def run(candles: dict, start_ms: int, capital: float, live: dict | None = None,
+        no_new_after: int | None = None) -> dict:
+    """no_new_after: from this day's close, no new bets (open ones run to their exits)."""
     btc_up = _btc_up(candles["BTC"])
     coins = {c: {"rows": candles[c], "idx": {r[0]: k for k, r in enumerate(candles[c])}} for c in COINS if c in candles}
     days = sorted({r[0] for c in coins.values() for r in c["rows"] if r[0] >= start_ms})
@@ -65,7 +67,7 @@ def run(candles: dict, start_ms: int, capital: float, live: dict | None = None) 
             del pos[c]
 
     def scan(t: int) -> list[str]:
-        if not btc_up.get(t):
+        if not btc_up.get(t) or (no_new_after is not None and t >= no_new_after):
             return []
         cands = []
         for c, v in coins.items():
