@@ -19,16 +19,17 @@ MIN_ORDER = 10.0  # Hyperliquid minimum order, USD
 CLOSE_STOP = True
 # Disaster stop: checked all day (every 5 minutes live), sells if price crashes this far BELOW the
 # normal stop, so a flash crash can't run on until the daily close. Normal dips are left alone.
-ATR_MULT = 3.0  # trailing stop distance, in average daily ranges (ATR)
+ATR_MULT = 2.5  # trailing stop distance in average daily ranges (ATR); was 3.0 until 11 Oct 2026
 DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
 MIN_VOL = 20e6  # a coin must trade $20M a day on average to count as "big"
 
-# Two sleeves: a Bitcoin core, and a slice spread over the biggest coins. 50/50 with 3 slots beat
-# 70/30 with 5 slots on both 2021-23 and unseen 2024+ (bigger drops, more profit), 25 Sep 2026.
+# Two sleeves: a Bitcoin core, and a slice spread over the biggest coins. 11 Oct 2026: a 54-setup search
+# chosen on 2021-23 only picked 30% BTC / 70% in 3 coins with a 2.5x ATR stop; on unseen 2024+ it made
+# +213% vs +174% for the old 50/50 with 3x, worst drop 35% vs 37%, and still led with ZEC removed.
 SLEEVES = [
-    {"key": "core", "label": "Bitcoin core", "share": 0.5, "slots": 1, "coins": ["BTC"]},
-    {"key": "satellite", "label": "Top-10 coins", "share": 0.5, "slots": 3, "coins": TRADEABLE},
+    {"key": "core", "label": "Bitcoin core", "share": 0.3, "slots": 1, "coins": ["BTC"]},
+    {"key": "satellite", "label": "Top-10 coins", "share": 0.7, "slots": 3, "coins": TRADEABLE},
 ]
 
 
