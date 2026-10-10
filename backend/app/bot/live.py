@@ -42,6 +42,7 @@ SLIPPAGE = 0.02
 MOON_SHARE = 0.2  # only to replay the old pot's open bets to their exit
 MOON_STOPPED_MS = 1791590400000  # 2026-10-10
 BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
+IDLE_CASH = 0.10  # ...unless over 10% of the account sits in cash the rules want invested: then top up
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
 # Our coin name -> Hyperliquid spot token (Unit-bridged coins are prefixed with U)
@@ -90,9 +91,11 @@ def plan_orders(holdings_usd: dict[str, float], usdc: float, targets_usd: dict[s
         elif want > 0 and have > want * (1 + BAND) and have - want >= MIN_ORDER_USD:
             orders.append({"coin": coin, "side": "sell", "usd": have - want, "all": False})
     cash = usdc + sum(o["usd"] for o in orders)
+    equity = usdc + sum(holdings_usd.values())
+    idle = equity > 0 and cash / equity > IDLE_CASH and sum(targets_usd.values()) > equity * (1 - IDLE_CASH)
     for coin, want in sorted(targets_usd.items(), key=lambda x: -x[1]):
         have = holdings_usd.get(coin, 0.0)
-        if want > 0 and have < want * (1 - BAND):
+        if want > 0 and (have < want * (1 - BAND) or idle):
             usd = min(want - have, cash * 0.995)
             if usd >= MIN_ORDER_USD:
                 orders.append({"coin": coin, "side": "buy", "usd": usd, "all": False})
