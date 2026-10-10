@@ -35,7 +35,9 @@ ORDER_LOG = DATA_DIR / "live_orders.jsonl"
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
-MAIN_SHARE, MOON_SHARE = 0.8, 0.2  # the real plan: 80% six-dot bot, 20% moonshot pot
+# 100% main bot since 10 Oct 2026: small-coin breakouts (the moonshot pot) lost money on unseen 2024+
+# data in every version tested (-63% to -79%), while the main bot made +174%. Was 0.8 / 0.2.
+MAIN_SHARE, MOON_SHARE = 1.0, 0.0
 BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
@@ -66,7 +68,7 @@ def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capit
     """USD the rules hold per coin right now across both pots (a coin can sit in several), the
     rules' own account value, and the main bot's run (for the safety switch status)."""
     run = engine.run_account(prep, start_ms, capital * MAIN_SHARE, live_candles, **safety)
-    moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles)
+    moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles) if MOON_SHARE else {"positions": [], "curve": []}
     held: dict[str, float] = {}
     for p in run["positions"] + moon["positions"]:
         held[p["coin"]] = held.get(p["coin"], 0.0) + p["value"]
