@@ -10,7 +10,7 @@ These are the exact rules that were backtested (Jan 2021 onwards, 0.15% cost per
   6 Calm        daily price swing (ATR %) not in its top 10% of the past year
 
 Buy when dots 1-5 are green; Calm (6) is shown for information only. Sell when 2 of dots 1-3
-turn red, or when the trailing stop (3 x ATR below the highest close since entry) is hit.
+turn red, or when the trailing stop (2.5 x ATR below the highest close since entry, engine.ATR_MULT) is hit.
 
 Calm stopped being required on 10 Oct 2026: without it the bot did better on both 2021-23 (seen)
 and 2024+ (unseen, +174% vs +133%) with the same worst drop (37% vs 38%), still ahead with ZEC
