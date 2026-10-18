@@ -13,7 +13,7 @@ import csv
 import io
 
 from . import alerts, bigposts, data, engine, holdings_watch, live as live_trading, moonshot, news_brake
-from .strategy import DOTS, all_green, coin_signals, trend_broken
+from .strategy import DOTS, REQUIRED, all_green, coin_signals, trend_broken
 
 CAPITAL = 800.0  # main six-dot bot; the real plan is $800 here + $200 moonshot
 MOON_CAPITAL = 200.0
@@ -25,6 +25,9 @@ DAY_MS = 86_400_000
 # drop in the track record is about 37%, so 40% only trips on something unusual. Restart by setting
 # "safety_reset_ms" in data/paper.json to the restart day (ask Claude).
 SAFETY = 0.40
+
+# The app shows only the dots the bot actually requires (Calm stopped being one on 10 Oct 2026)
+SHOWN = [d for d in DOTS if d[0] in REQUIRED]
 
 _state: dict = {"ready": False, "message": "Downloading price history, first run takes about a minute"}
 
@@ -143,11 +146,11 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
         # Live dots: the same rules with today's unfinished candle as if it closed now. Display only,
         # the bot still acts on the finished day at 10am AEST.
         now_sig = coin_signals(v["rows"] + [live[coin]])[-1] if coin in live else None
-        dots = {k: bool(now_sig[k] if now_sig and k != "big" else s[k]) for k, _, _ in DOTS}
+        dots = {k: bool(now_sig[k] if now_sig and k != "big" else s[k]) for k, _, _ in SHOWN}
         scanner.append({
             "coin": coin, "price": live[coin][4] if coin in live else v["rows"][-1][4], "status": status,
             "dots": dots, "green": sum(dots.values()),
-            "dots_at_close": {k: bool(s[k]) for k, _, _ in DOTS},
+            "dots_at_close": {k: bool(s[k]) for k, _, _ in SHOWN},
             "strength": round(s["strength"], 2),
         })
     order = {"IN TRADE": 0, "SELL": 1, "BUY": 2, "READY": 3, "WATCHING": 4}
@@ -160,7 +163,7 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
         "updated_at": time.time(),
         "last_candle": engine._day(last_t),
         "coins_scanned": len(prep["coins"]),
-        "dots": [{"key": k, "label": label, "desc": desc} for k, label, desc in DOTS],
+        "dots": [{"key": k, "label": label, "desc": desc} for k, label, desc in SHOWN],
         "sleeves": [{k: s[k] for k in ("key", "label", "share", "slots")} for s in engine.SLEEVES],
         "cost_per_side_pct": engine.COST * 100,
         "exchange": engine.EXCHANGE,

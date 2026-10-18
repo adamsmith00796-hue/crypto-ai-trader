@@ -13,7 +13,7 @@ const STATUS: Record<string, { label: string; color: string; hint: string }> = {
   SELL: { label: "SELL", color: RED, hint: "Trend broke, sells at the next daily open" },
   BUY: { label: "BUY", color: CYAN, hint: "All six green, buys at the next daily open" },
   READY: { label: "READY", color: YELLOW, hint: "All six green, but the bot's slots are full" },
-  WATCHING: { label: "WATCHING", color: "rgba(255,255,255,0.4)", hint: "Not all dots green yet" },
+  WATCHING: { label: "WATCHING", color: "rgba(255,255,255,0.4)", hint: "Not all five dots green yet" },
 };
 
 export default function Home() {
