@@ -19,6 +19,10 @@ MIN_ORDER = 10.0  # Hyperliquid minimum order, USD
 CLOSE_STOP = True
 # Disaster stop: checked all day (every 5 minutes live), sells if price crashes this far BELOW the
 # normal stop, so a flash crash can't run on until the daily close. Normal dips are left alone.
+# freqtrade-style protections, tested 18 Oct 2026 and left OFF: no setting beat "off" on unseen 2024+ data
+# (best seen-data pick, 3-day cooldown + pause after 3 stops in 14 days, made +134% vs +188% unseen).
+COOLDOWN_DAYS = 0      # after selling a coin, wait this many days before buying it again (0 = off)
+STOP_GUARD = (0, 0)    # (stops, days): after this many stop-outs within this many days, pause new buys (0 = off)
 ATR_MULT = 2.5  # trailing stop distance in average daily ranges (ATR); was 3.0 until 11 Oct 2026
 DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
@@ -79,12 +83,17 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
     pos: dict[str, dict] = {}
     trades: list[dict] = []
     curve: list[tuple[int, float]] = []
+    last_exit: dict[str, int] = {}
+    stop_days: list[int] = []
 
     def close(c: str, t: int, px: float, reason: str) -> None:
         nonlocal cash
         p = pos.pop(c)
         value = p["units"] * px * (1 - COST)
         cash += value
+        last_exit[c] = t
+        if "stop" in reason.lower():
+            stop_days.append(t)
         trades.append({"coin": c, "sleeve": sleeve["key"], "entry_date": _day(p["t"]), "entry_price": p["entry"],
                        "cost": p["cost"], "entry_stop": p["stop0"],
                        "exit_date": _day(t), "exit_price": px, "reason": reason,
@@ -119,9 +128,12 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
         queue = [("sell", c) for c in pos if (s := sig(c, t)) and trend_broken(s)]
         if no_buy_days and t in no_buy_days:
             return queue
+        if STOP_GUARD[0] and sum(t - STOP_GUARD[1] * 86_400_000 < d <= t for d in stop_days) >= STOP_GUARD[0]:
+            return queue
         free = K - len(pos) + len(queue)
         cands = [(s["strength"], c) for c in info
-                 if c not in pos and (not allowed or c in allowed) and (s := sig(c, t)) and all_green(s)]
+                 if c not in pos and (not allowed or c in allowed) and (s := sig(c, t)) and all_green(s)
+                 and t - last_exit.get(c, -10**15) >= COOLDOWN_DAYS * 86_400_000]
         return queue + [("buy", c) for _, c in sorted(cands, reverse=True)[:max(free, 0)]]
 
     before = [t for t in prep["days"] if t < start_ms]
