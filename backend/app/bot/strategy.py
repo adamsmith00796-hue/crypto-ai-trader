@@ -12,6 +12,8 @@ These are the exact rules that were backtested (Jan 2021 onwards, 0.15% cost per
 Buy when dots 1-5 are green; Calm (6) is shown for information only. Sell when 2 of dots 1-3
 turn red, or when the trailing stop (2.5 x ATR below the highest close since entry, engine.ATR_MULT) is hit.
 
+No new buys at all while Bitcoin closes below its 200-day average (market weather filter, Oct 2026).
+
 Calm stopped being required on 10 Oct 2026: without it the bot did better on both 2021-23 (seen)
 and 2024+ (unseen, +174% vs +133%) with the same worst drop (37% vs 38%), still ahead with ZEC
 removed. Big swings often come at the start of strong trends; the stops already handle the risk.
@@ -87,7 +89,8 @@ REQUIRED = ["trend", "momentum", "breakout", "weekly", "big"]
 
 
 def all_green(s: dict) -> bool:
-    return all(s[k] for k in REQUIRED)
+    """Buy signal: dots 1-5 green, and Bitcoin above its 200-day average (set by engine.prepare)."""
+    return all(s[k] for k in REQUIRED) and s.get("btc_regime", True)
 
 
 def trend_broken(s: dict) -> bool:

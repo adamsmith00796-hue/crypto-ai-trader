@@ -41,6 +41,17 @@ def prepare(candles: dict[str, list[list[float]]]) -> dict:
             continue
         info[coin] = {"rows": rows, "sig": coin_signals(rows), "idx": {r[0]: k for k, r in enumerate(rows)}}
     days = sorted({r[0] for v in info.values() for r in v["rows"]})
+    # Market weather: new buys only while Bitcoin closes above its 200-day average (added 11 Oct 2026:
+    # unseen 2024+ +233% vs +213%, worst drop 26% vs 35%; bear markets start below this line)
+    regime: dict[int, bool] = {}
+    if "BTC" in info:
+        cl = [r[4] for r in info["BTC"]["rows"]]
+        for k, r in enumerate(info["BTC"]["rows"]):
+            regime[r[0]] = k >= 199 and cl[k] > sum(cl[k - 199:k + 1]) / 200
+    for v in info.values():
+        for r, sg in zip(v["rows"], v["sig"]):
+            if sg:
+                sg["btc_regime"] = regime.get(r[0], False)
     for t in days:
         live = [(v["sig"][v["idx"][t]]["vol30"], c) for c, v in info.items()
                 if t in v["idx"] and v["sig"][v["idx"][t]]]
