@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { api, type BotPosition, type BotStats, type BotStatus, type BotTrade } from "@/lib/api";
+import { api, type BotStats, type BotStatus } from "@/lib/api";
 import { CYAN, GREEN, RED, YELLOW, usd, pct, price, tone } from "@/lib/stats";
 import { Loading, Panel } from "@/components/Panel";
 
@@ -68,7 +68,7 @@ export default function Home() {
       )}
 
       <footer className="pb-2 text-center text-[9px] uppercase tracking-widest text-white/35">
-        Paper trading · results use past prices and are not a promise of future returns · not financial advice
+        Live trading on Hyperliquid · track record uses past prices, not a promise of future returns · not financial advice
       </footer>
     </div>
   );
@@ -85,12 +85,10 @@ function StatusLight({ bot, err }: { bot: BotStatus | null; err: string | null }
   let color = YELLOW, label = "CONNECTING", detail = "Waiting for the bot", flash = false;
   if (err || (bot?.ready && now - bot.updated_at * 1000 > STALE_MS)) {
     [color, label, detail, flash] = [RED, "BOT OFFLINE", "Not updating, the backend needs restarting", true];
-  } else if (bot?.ready && bot.paper.halted) {
-    [color, label, detail, flash] = [RED, "STOPPED", `Safety switch tripped on ${bot.paper.halted}, trading paused`, true];
-  } else if (bot?.ready && !bot.paper.started) {
-    [color, label, detail] = [YELLOW, "NOT TRADING YET", `Starts after the ${bot.paper.start_date} daily close (10am AEST), first trades show the day after`];
-  } else if (bot?.ready && bot.paper.positions.length) {
-    const coins = Array.from(new Set(bot.paper.positions.map((p) => p.coin))).join(", ");
+  } else if (bot?.ready && bot.live?.halted) {
+    [color, label, detail, flash] = [RED, "STOPPED", `Safety switch tripped on ${bot.live.halted}, trading paused`, true];
+  } else if (bot?.ready && Object.values(bot.live?.holdings ?? {}).some((v) => v >= 1)) {
+    const coins = Object.entries(bot.live?.holdings ?? {}).filter(([, v]) => v >= 1).map(([c]) => c).join(", ");
     [color, label, detail] = [GREEN, "TRADING", `In ${coins}`];
   } else if (bot?.ready) {
     [color, label, detail] = [RED, "NOT IN A TRADE", "Running, holding cash until the first five dots are green"];
@@ -111,25 +109,16 @@ function Body({ b }: { b: Ready }) {
   return (
     <>
       <LivePanel b={b} />
-      <Overview b={b} />
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-        <Panel title="Holding now" sub="Both pots · profit or loss since each buy">
-          <Holdings b={b} />
-        </Panel>
-        <Panel title="Latest activity" sub="Buys and sells, newest first · you also get these on Telegram">
-          <Activity b={b} />
-        </Panel>
-      </div>
+      <Panel title="Latest real trades" sub="Filled orders on Hyperliquid, newest first · you also get these on Telegram">
+        <Activity b={b} />
+      </Panel>
       <SafetyLine b={b} />
 
       <p className="px-1 pt-2 text-[10px] font-bold uppercase tracking-widest text-white/40">Details</p>
-      <Details title="Six-dot scanner" hint="The six checks for each coin, live">
+      <Details title="Six-dot scanner" hint="The checks for each coin, live (Calm is for information only)">
         <Scanner b={b} />
       </Details>
-      <Details title="🚀 Moonshot watch list" hint="Which small coins are close to a breakout">
-        <MoonshotPanel b={b} />
-      </Details>
-      <Details title="Safety and tax log" hint="Safety switch, news brake, download every trade">
+      <Details title="Safety and trade log" hint="Safety switch, news brake, download every real trade">
         <Safeguards b={b} />
       </Details>
       <Details title={`Track record since ${t.start_date}`} hint={`Same rules on past prices: $${b.capital} would be ${usd(t.bot.end)} vs ${usd(t.hold_btc.end)} holding Bitcoin`}>
@@ -212,84 +201,19 @@ function Details({ title, hint, children }: { title: string; hint: string; child
   );
 }
 
-function Overview({ b }: { b: Ready }) {
-  const p = b.paper, m = b.moonshot;
-  const main = p.stats?.end ?? b.capital, moon = m.stats?.end ?? m.capital;
-  const start = b.capital + m.capital, total = main + moon, change = total - start;
-  const next = [...p.pending, ...m.pending];
-  return (
-    <section className="panel grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
-      <div>
-        <p className="panel-sub !mt-0">Paper test account · pretend money, same rules · started {p.start_date}</p>
-        <p className="glow-green text-[44px] font-bold leading-none tabular-nums sm:text-[56px]" style={{ color: tone(change) }}>{usd(total, 2)}</p>
-        <p className="mt-1 text-[14px] font-bold tabular-nums" style={{ color: tone(change) }}>
-          {change >= 0 ? "+" : "-"}{usd(Math.abs(change), 2)} ({pct((change / start) * 100)})
-        </p>
-        {next.length > 0 && <p className="mt-1 text-[11px] text-[var(--cyan)]">Next daily open (10am): {next.map((x) => `${x.action} ${x.coin}`).join(", ")}</p>}
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-[11px] sm:w-[300px]">
-        <Pot label="Main bot" value={main} start={b.capital} />
-        <Pot label="🚀 Moonshot" value={moon} start={m.capital} />
-      </div>
-    </section>
-  );
-}
-
-function Pot({ label, value, start }: { label: string; value: number; start: number }) {
-  return (
-    <div className="rounded border border-[var(--line)] bg-black/30 px-2.5 py-2">
-      <div className="panel-sub !mt-0">{label}</div>
-      <div className="text-[16px] font-bold tabular-nums text-white">{usd(value, 0)}</div>
-      <div className="tabular-nums" style={{ color: tone(value - start) }}>{pct(((value - start) / start) * 100, 1)}</div>
-    </div>
-  );
-}
-
-function Holdings({ b }: { b: Ready }) {
-  const rows = [...b.paper.positions, ...b.moonshot.positions].sort((x, y) => y.value - x.value);
-  if (!rows.length) return <p className="text-[12px] text-white/60">Nothing right now. The bot is holding cash until its rules say buy.</p>;
-  const cash = b.paper.cash + b.moonshot.cash;
-  return (
-    <ul className="space-y-1.5">
-      {rows.map((r, i) => (
-        <li key={`${r.coin}-${r.sleeve}-${i}`} className="flex items-center justify-between gap-2 rounded border border-[var(--line)] bg-black/20 px-2.5 py-2">
-          <span className="flex items-center gap-2">
-            <span className="text-[14px] font-bold">{r.coin}</span>
-            <span className="rounded bg-white/10 px-1.5 py-0.5 text-[8px] font-bold tracking-wider text-white/60">{r.sleeve === "moonshot" ? "🚀 MOON" : "MAIN"}</span>
-          </span>
-          <span className="text-right tabular-nums">
-            <span className="block text-[13px] text-white">{usd(r.value, 2)}</span>
-            <span className="block text-[11px] font-bold" style={{ color: tone(r.pnl) }}>{pct(r.pnl_pct, 1)}</span>
-          </span>
-        </li>
-      ))}
-      {cash >= 1 && <li className="flex justify-between px-2.5 pt-1 text-[11px] text-white/50"><span>Cash waiting</span><span className="tabular-nums">{usd(cash, 2)}</span></li>}
-    </ul>
-  );
-}
-
 function Activity({ b }: { b: Ready }) {
-  type Row = { date: string; text: string; color: string; sub: string };
-  const tag = (s: string) => (s === "moonshot" ? " 🚀" : "");
-  const rows: Row[] = [];
-  for (const t of [...b.paper.trades, ...b.moonshot.trades]) {
-    rows.push({ date: t.exit_date, text: `Sold ${t.coin}${tag(t.sleeve)}`, color: tone(t.pnl), sub: `${usd(t.pnl, 2).replace("$-", "-$")} (${pct(t.pnl_pct, 1)}) · ${t.reason.toLowerCase()}` });
-    rows.push({ date: t.entry_date, text: `Bought ${t.coin}${tag(t.sleeve)}`, color: CYAN, sub: `${usd(t.cost, 2)} at ${price(t.entry_price)}` });
-  }
-  for (const p of [...b.paper.positions, ...b.moonshot.positions]) {
-    rows.push({ date: p.entry_date, text: `Bought ${p.coin}${tag(p.sleeve)}`, color: CYAN, sub: `${usd(p.cost, 2)} at ${price(p.entry_price)}` });
-  }
-  rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
+  const rows = b.live?.history ?? [];
   if (!rows.length) return <p className="text-[12px] text-white/60">No trades yet.</p>;
+  const day = (t: number) => new Date(t).toLocaleDateString("en-AU", { day: "numeric", month: "short" });
   return (
     <ul className="space-y-1.5">
       {rows.slice(0, 8).map((r, i) => (
         <li key={i} className="flex items-start justify-between gap-2 border-b border-[var(--line)] pb-1.5 last:border-0">
           <span>
-            <span className="block text-[12px] font-bold" style={{ color: r.color }}>{r.text}</span>
-            <span className="block text-[10px] text-white/50 tabular-nums">{r.sub}</span>
+            <span className="block text-[12px] font-bold" style={{ color: r.side === "buy" ? CYAN : YELLOW }}>{r.side === "buy" ? "Bought" : "Sold"} {r.coin}</span>
+            <span className="block text-[10px] text-white/50 tabular-nums">{usd(r.usd, 2)} at {price(r.price)}</span>
           </span>
-          <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{r.date}</span>
+          <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{day(r.t)}</span>
         </li>
       ))}
     </ul>
@@ -300,9 +224,9 @@ function SafetyLine({ b }: { b: Ready }) {
   const h = b.health, nb = b.news_brake;
   const chips: [string, string, string][] = [
     ["Health", h.verdict, VERDICT[h.verdict]],
-    ["Safety switch", b.paper.halted ? "TRIPPED" : `armed · ${Math.max(0, h.safety_limit_pct - h.drop_now_pct).toFixed(0)}% room`, b.paper.halted ? RED : GREEN],
+    ["Safety switch", b.live?.halted ? "TRIPPED" : `armed · ${Math.max(0, h.safety_limit_pct - h.drop_now_pct).toFixed(0)}% room`, b.live?.halted ? RED : GREEN],
     ["News brake", nb.on ? "ON · no new buys today" : "off", nb.on ? YELLOW : GREEN],
-    ["Moonshot buying", b.moonshot.btc_uptrend ? "allowed" : "paused (BTC falling)", b.moonshot.btc_uptrend ? GREEN : YELLOW],
+    ["Market weather", b.market?.btc_above_200 === false ? "BTC below 200-day · no new buys" : "BTC above 200-day · buying allowed", b.market?.btc_above_200 === false ? YELLOW : GREEN],
   ];
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -368,75 +292,6 @@ function Scanner({ b }: { b: Ready }) {
   );
 }
 
-function MoonshotPanel({ b }: { b: Ready }) {
-  const m = b.moonshot, r = m.rules;
-  const value = m.stats?.end ?? m.capital;
-  return (
-    <Panel title="🚀 Moonshot pot · high risk" sub={`$${m.capital} of pretend money · ${m.started ? "started" : "starts"} ${m.start_date} · small Hyperliquid coins · can go to zero`}
-      right={<span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black" style={{ background: m.btc_uptrend ? GREEN : RED }}>
-        {m.btc_uptrend ? "BTC UPTREND · BUYING ALLOWED" : "BTC DOWNTREND · NO NEW BUYS"}</span>}>
-      <div className="grid gap-3 lg:grid-cols-[220px_1fr_1fr]">
-        <div className="space-y-1">
-          <p className="panel-sub">Pot value</p>
-          <p className="text-[28px] font-bold leading-none tabular-nums" style={{ color: tone(value - m.capital) }}>{usd(value, 2)}</p>
-          <p className="text-[11px] tabular-nums" style={{ color: tone(value - m.capital) }}>{pct(((value - m.capital) / m.capital) * 100)}</p>
-          <p className="pt-1 text-[9px] leading-relaxed text-white/45">
-            Buys a new 20-day high on 2x volume while Bitcoin is rising. Up to {r.slots} bets. Sells at -{r.stop_pct.toFixed(0)}%,
-            on a close {r.trail_pct.toFixed(0)}% below its peak{r.take_half_pct > 0 ? `, half at +${r.take_half_pct.toFixed(0)}%` : " (winners are left to run)"}, or after {r.time_stop_days} days if not up 10%.
-          </p>
-        </div>
-        <div>
-          <p className="panel-sub mb-1">Watching</p>
-          <table className="w-full text-[11px] tabular-nums">
-            <tbody>
-              {m.watch.map((w) => (
-                <tr key={w.coin} className="border-t border-[var(--line)]">
-                  <td className="py-1 font-bold">{w.coin}</td>
-                  <td className="py-1 text-right text-white/70">{price(w.price)}</td>
-                  <td className="py-1 text-right text-white/50" title="How far below its 20-day high">
-                    {w.to_breakout_pct == null ? "--" : w.to_breakout_pct <= 0 ? "at high" : `${w.to_breakout_pct.toFixed(1)}% below high`}
-                  </td>
-                  <td className="py-1 pl-2 text-right">
-                    <span className="rounded px-1.5 py-0.5 text-[9px] font-bold text-black"
-                      style={{ background: w.status === "IN TRADE" ? GREEN : w.status === "BUY" ? CYAN : "rgba(255,255,255,0.4)" }}>{w.status}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="space-y-2">
-          <p className="panel-sub">Breakouts on coins Hyperliquid doesn&apos;t list · {m.elsewhere.day} · alert only</p>
-          {m.elsewhere.breakouts.length ? (
-            <div className="flex flex-wrap gap-1">
-              {m.elsewhere.breakouts.map((h) => (
-                <span key={h.coin} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[10px] tabular-nums" title={`Closed ${price(h.close)}, ${h.volume_x}x volume, hard stop ${price(h.stop)}`}>
-                  <b>{h.coin}</b> <span style={{ color: tone(h.gain_1d_pct) }}>{pct(h.gain_1d_pct, 0)}</span>
-                </span>
-              ))}
-            </div>
-          ) : <p className="text-[11px] text-white/50">None on the last daily close</p>}
-          {m.elsewhere.early.length > 0 && (
-            <>
-              <p className="panel-sub">Breaking out today · not confirmed until the daily close</p>
-              <div className="flex flex-wrap gap-1">
-                {m.elsewhere.early.map((h) => (
-                  <span key={h.coin} className="rounded border border-dashed border-[var(--line)] px-1.5 py-0.5 text-[10px] tabular-nums" title={`Now ${price(h.close)}, ${h.volume_x}x volume so far, hard stop ${price(h.stop)}`}>
-                    <b>{h.coin}</b> <span style={{ color: tone(h.gain_1d_pct) }}>{pct(h.gain_1d_pct, 0)}</span>
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-          <p className="panel-sub">Bets</p>
-          <PositionTable rows={m.positions} />
-          {m.trades.length > 0 && <TradeTable rows={m.trades.slice(0, 8)} />}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 const VERDICT: Record<string, string> = { "ON TRACK": GREEN, WATCH: YELLOW, WARNING: RED, STOPPED: RED };
 
 function Safeguards({ b }: { b: Ready }) {
@@ -452,7 +307,7 @@ function Safeguards({ b }: { b: Ready }) {
       <div className="flex items-center justify-between">
         <span className="text-white/50">Safety switch</span>
         <span className="tabular-nums text-white/70">
-          {b.paper.halted ? <b style={{ color: RED }}>TRIPPED</b> : <>armed · sells all at -{h.safety_limit_pct.toFixed(0)}% · now -{h.drop_now_pct.toFixed(1)}% ({room.toFixed(0)}% room)</>}
+          {b.live?.halted ? <b style={{ color: RED }}>TRIPPED</b> : <>armed · sells all at -{h.safety_limit_pct.toFixed(0)}% · now -{h.drop_now_pct.toFixed(1)}% ({room.toFixed(0)}% room)</>}
         </span>
       </div>
       <div className="flex items-center justify-between">
@@ -465,7 +320,7 @@ function Safeguards({ b }: { b: Ready }) {
         </ul>
       )}
       <a href="/api/bot/tax.csv" className="inline-block rounded border border-[var(--line)] px-2 py-0.5 font-bold text-white/70 hover:text-white">
-        ⬇ Download tax log (CSV)
+        ⬇ Download real trade log (CSV)
       </a>
     </div>
   );
@@ -550,58 +405,6 @@ function EquityChart({ curves }: { curves: { pts: [number, number][]; color: str
         <text key={c.label} x={pad + 6 + i * 90} y={18} fontSize={10} fontWeight="bold" fill={c.color}>{c.label}</text>
       ))}
     </svg>
-  );
-}
-
-function PositionTable({ rows }: { rows: BotPosition[] }) {
-  if (!rows.length) return <p className="text-[11px] text-white/50">No open trades.</p>;
-  return (
-    <table className="w-full text-[11px] tabular-nums">
-      <thead>
-        <tr className="text-left text-[9px] uppercase tracking-wider text-white/40">
-          <th className="font-normal">Coin</th><th className="font-normal">Since</th>
-          <th className="text-right font-normal">Value</th><th className="text-right font-normal">Stop</th><th className="text-right font-normal">P/L</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((p, i) => (
-          <tr key={`${p.coin}-${p.sleeve}-${i}`} className="border-t border-[var(--line)]">
-            <td className="py-1 font-bold">{p.coin} <span className="text-[8px] font-normal text-white/40">{p.sleeve === "core" ? "CORE" : p.sleeve === "moonshot" ? "MOON" : "TOP-10"}</span></td>
-            <td className="py-1 text-white/60">{p.entry_date}</td>
-            <td className="py-1 text-right">{usd(p.value, 2)}</td>
-            <td className="py-1 text-right text-white/60">{price(p.stop)}</td>
-            <td className="py-1 text-right" style={{ color: tone(p.pnl) }}>{pct(p.pnl_pct, 1)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function TradeTable({ rows }: { rows: BotTrade[] }) {
-  if (!rows.length) return <p className="text-[11px] text-white/50">No closed trades yet.</p>;
-  return (
-    <div className="max-h-[320px] overflow-y-auto">
-      <table className="w-full text-[11px] tabular-nums">
-        <thead className="sticky top-0 bg-[var(--panel,#0b0f14)]">
-          <tr className="text-left text-[9px] uppercase tracking-wider text-white/40">
-            <th className="font-normal">Coin</th><th className="font-normal">Bought</th><th className="font-normal">Sold</th>
-            <th className="font-normal">Why</th><th className="text-right font-normal">P/L</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.coin}-${r.exit_date}-${i}`} className="border-t border-[var(--line)]">
-              <td className="py-1 font-bold">{r.coin}</td>
-              <td className="py-1 text-white/60">{r.entry_date}</td>
-              <td className="py-1 text-white/60">{r.exit_date}</td>
-              <td className="py-1 text-white/60">{r.reason}</td>
-              <td className="py-1 text-right" style={{ color: tone(r.pnl) }}>{usd(r.pnl, 2).replace("$-", "-$")} ({pct(r.pnl_pct, 0)})</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 

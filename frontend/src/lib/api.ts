@@ -142,7 +142,9 @@ export type BotStatus =
         orders?: { coin: string; side: "buy" | "sell"; usd: number; result?: { ok: boolean; size?: number; price?: number; error?: string } }[];
         halted?: string | null;
         error?: string | null;
+        history?: { t: number; side: "buy" | "sell"; coin: string; usd: number; size: number; price: number }[];
       };
+      market?: { btc_above_200: boolean };
       moonshot: {
         capital: number;
         start_date: string;

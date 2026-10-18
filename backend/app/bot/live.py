@@ -146,6 +146,23 @@ class Account:
         return {"ok": False, "error": status.get("error") or str(resp)[:300]}
 
 
+def history(n: int = 12) -> list[dict]:
+    """The last n filled real orders, newest first (from the order log)."""
+    if not ORDER_LOG.exists():
+        return []
+    out = []
+    for line in ORDER_LOG.read_text().splitlines():
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        r = o.get("result") or {}
+        if r.get("ok") and o.get("network") == "live":
+            out.append({"t": int(o["t"] * 1000), "side": o["side"], "coin": o["coin"],
+                        "usd": r["size"] * r["price"], "size": r["size"], "price": r["price"]})
+    return out[::-1][:n]
+
+
 def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
@@ -186,7 +203,7 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
         targets_usd = {c: v * scale for c, v in targets.items() if acct is None or c in px}
         for c, v in kept.items():
             targets_usd[c] = targets_usd.get(c, 0.0) + v
-        out.update(targets=targets_usd, halted=run["halted"])
+        out.update(targets=targets_usd, halted=run["halted"], history=history())
         orders = plan_orders(holdings, usdc, targets_usd)
         out["orders"] = orders
 

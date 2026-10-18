@@ -193,6 +193,7 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
                       "take_half_pct": moonshot.TAKE * 100, "time_stop_days": moonshot.DAYS_MAX},
         },
         "health": _health(paper, bt, hold_btc, engine.stats(bt["curve"])),
+        "market": {"btc_above_200": bool(btc["sig"][-1] and btc["sig"][-1].get("btc_regime"))},
         "news_brake": brake or {"on": False, "headlines": [], "crisis_headlines_24h": 0},
         "backtest": {
             "start_date": engine._day(BACKTEST_START_MS),
@@ -217,8 +218,7 @@ async def _refresh_once() -> None:
     state = await asyncio.to_thread(build, candles, live, brake)
     state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days())
     _state = state
-    await asyncio.to_thread(alerts.notify, _state["paper"])
-    await asyncio.to_thread(alerts.notify, _state["moonshot"])
+    # Paper-account Telegram alerts stopped 18 Oct 2026 (confusing next to the real ones); LIVE alerts come from live.sync.
     # Breakout alerts and their sell signals were switched off on 10 Oct 2026 at Adam's request (trading
     # them by hand wasn't working for him); the breakouts still show on the dashboard.
     await asyncio.to_thread(holdings_watch.notify)
@@ -246,15 +246,11 @@ def status() -> dict:
 
 
 def tax_csv() -> str:
-    """Every closed paper trade, one row each, for an accountant. Amounts in USD."""
+    """Every filled real order on Hyperliquid, one row each, for an accountant. Amounts in USD."""
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Coin", "Strategy", "Date bought", "Buy price (USD)", "Amount spent (USD)", "Date sold",
-                "Sell price (USD)", "Proceeds after fees (USD)", "Profit/loss (USD)", "Days held", "Reason sold"])
-    paper = _state.get("paper") or {}
-    for t in sorted(paper.get("trades", []), key=lambda t: (t["exit_date"], t["coin"])):
-        held = (time.mktime(time.strptime(t["exit_date"], "%Y-%m-%d")) - time.mktime(time.strptime(t["entry_date"], "%Y-%m-%d"))) / 86400
-        w.writerow([t["coin"], "Bitcoin core" if t["sleeve"] == "core" else "Top coins", t["entry_date"],
-                    f"{t['entry_price']:.6g}", f"{t['cost']:.2f}", t["exit_date"], f"{t['exit_price']:.6g}",
-                    f"{t['cost'] + t['pnl']:.2f}", f"{t['pnl']:.2f}", int(held), t["reason"]])
+    w.writerow(["Date (UTC)", "Action", "Coin", "Quantity", "Price (USD)", "Value (USD)"])
+    for o in reversed(live_trading.history(n=100_000)):
+        w.writerow([time.strftime("%Y-%m-%d %H:%M", time.gmtime(o["t"] / 1000)), o["side"].upper(), o["coin"],
+                    f"{o['size']:.8g}", f"{o['price']:.6g}", f"{o['usd']:.2f}"])
     return out.getvalue()
