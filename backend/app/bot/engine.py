@@ -33,12 +33,11 @@ DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
 MIN_VOL = 20e6  # a coin must trade $20M a day on average to count as "big"
 
-# Two sleeves: a Bitcoin core, and a slice spread over the biggest coins. 11 Oct 2026: a 54-setup search
-# chosen on 2021-23 only picked 30% BTC / 70% in 3 coins with a 2.5x ATR stop; on unseen 2024+ it made
-# +213% vs +174% for the old 50/50 with 3x, worst drop 35% vs 37%, and still led with ZEC removed.
+# One pot, 3 slots, Bitcoin competing with the other coins (30 Oct 2026). Before that: 30% fixed Bitcoin core
+# + 70% in 3 slots. Picked on 2021-23 (+536% vs +423%) and confirmed on unseen 2024+ (+193% vs +180%), still
+# ahead with ZEC removed; worst drop 28% vs 26%. The fixed core sat in cash whenever Bitcoin wasn't green.
 SLEEVES = [
-    {"key": "core", "label": "Bitcoin core", "share": 0.3, "slots": 1, "coins": ["BTC"]},
-    {"key": "satellite", "label": "Top-10 coins", "share": 0.7, "slots": 3, "coins": TRADEABLE},
+    {"key": "satellite", "label": "Top coins", "share": 1.0, "slots": 3, "coins": TRADEABLE},
 ]
 
 
