@@ -27,6 +27,7 @@ STOP_GUARD = (0, 0)    # (stops, days): after this many stop-outs within this ma
 # daily close. Added 30 Oct 2026 at Adam's request: on 2 years of hourly data it made about the same
 # ($2,269 vs $2,298 per $1,000) with a similar worst drop, so it is neutral, but it catches days like HYPE +17%.
 INTRADAY_BUYS = True
+TAKE_HALF = 0.0  # sell half once a close is this far above entry (0 = off). Tested 30 Oct 2026: +100% did best on unseen data but worse on 2021-23, so it fails the pick-on-seen rule
 ATR_MULT = 2.5  # trailing stop distance in average daily ranges (ATR); was 3.0 until 11 Oct 2026
 DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
@@ -210,6 +211,10 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             elif not CLOSE_STOP and low <= p["stop"]:
                 close(c, t, min(o, p["stop"]), "Stop hit")
             else:
+                if TAKE_HALF and not p.get("half") and cl >= p["entry"] * (1 + TAKE_HALF):
+                    sold = p["units"] / 2
+                    cash += sold * cl * (1 - COST)
+                    p["units"] -= sold; p["cost"] /= 2; p["half"] = True
                 p["high"] = max(p["high"], cl)
                 p["stop"] = max(p["stop"], p["high"] - ATR_MULT * sig(c, t)["atr"])
         queue = scan(t)
