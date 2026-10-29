@@ -118,3 +118,45 @@ def refresh_all() -> tuple[dict[str, list[list[float]]], dict[str, list[float]]]
                 live[coin] = now
     return candles, live
 
+
+
+HOURLY_DIR = DATA_DIR / "hourly"
+HOURLY_START_MS = 1789862400000  # 2026-09-20: a week before live trading began
+HOUR_MS, DAY_MS = 3_600_000, 86_400_000
+
+
+def refresh_hourly(coins: list[str]) -> dict[str, dict[int, list[list[float]]]]:
+    """Hourly candles for the coins the bot trades, topped up incrementally and cached in
+    data/hourly/. The last candle of each coin is the hour still forming. Returns
+    {coin: {day_start_ms: [hourly rows]}} for the engine's intraday buys."""
+    HOURLY_DIR.mkdir(parents=True, exist_ok=True)
+    out: dict[str, dict[int, list[list[float]]]] = {}
+    with httpx.Client(timeout=30) as client:
+        for coin in coins:
+            path = HOURLY_DIR / f"{coin}.json"
+            rows = json.loads(path.read_text()) if path.exists() else []
+            rows = rows[:-1]  # drop the hour that was still forming last time
+            start = rows[-1][0] + 1 if rows else HOURLY_START_MS
+            try:
+                if coin in HL_ONLY or coin in HL_SPOT:
+                    r = client.post(HL_INFO, json={"type": "candleSnapshot", "req": {
+                        "coin": HL_SPOT.get(coin, coin), "interval": "1h", "startTime": start,
+                        "endTime": int(time.time() * 1000)}})
+                    r.raise_for_status()
+                    rows += [[k["t"], float(k["o"]), float(k["h"]), float(k["l"]), float(k["c"])] for k in r.json()]
+                else:
+                    while True:
+                        b = _get(client, "klines", {"symbol": f"{coin}USDT", "interval": "1h", "limit": 1000, "startTime": start})
+                        rows += [[k[0], float(k[1]), float(k[2]), float(k[3]), float(k[4])] for k in b]
+                        if len(b) < 1000:
+                            break
+                        start = b[-1][0] + 1
+            except httpx.HTTPError:
+                pass  # keep what we have; the coin just misses intraday checks this round
+            rows = sorted({r[0]: r for r in rows}.values())
+            path.write_text(json.dumps(rows))
+            days: dict[int, list[list[float]]] = {}
+            for r in rows:
+                days.setdefault(r[0] // DAY_MS * DAY_MS, []).append(r)
+            out[coin] = days
+    return out

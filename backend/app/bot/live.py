@@ -68,10 +68,10 @@ def _day(ms: float) -> str:
 
 
 def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capital: float,
-             **safety) -> tuple[dict[str, float], float, dict, set[str]]:
+             hourly: dict | None = None, **safety) -> tuple[dict[str, float], float, dict, set[str]]:
     """USD the main bot holds per coin right now, its own account value, its run (for the safety switch
     status), and the coins the retired moonshot pot still holds (kept as they are until they exit)."""
-    run = engine.run_account(prep, start_ms, capital, live_candles, **safety)
+    run = engine.run_account(prep, start_ms, capital, live_candles, hourly=hourly, **safety)
     moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles, no_new_after=MOON_STOPPED_MS)
     held: dict[str, float] = {}
     for p in run["positions"]:
@@ -167,7 +167,8 @@ def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
-def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int]) -> dict:
+def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int],
+         hourly: dict | None = None) -> dict:
     """One pass: read the account, work out orders, place them (unless off / dry-run)."""
     cfg = settings()
     mode = cfg["mode"]
@@ -196,7 +197,7 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
         out["started"] = _day(state["start_ms"])
 
         targets, engine_equity, run, keep = _targets(prep, candles, live_candles, state["start_ms"], state["capital"],
-                                                     safety=safety, no_buy_days=no_buy_days,
+                                                     hourly=hourly, safety=safety, no_buy_days=no_buy_days,
                                                      safety_from_ms=state.get("safety_reset_ms", state["start_ms"]))
         kept = {c: holdings.get(c, 0.0) for c in keep}  # old moonshot bets: hold as they are
         scale = (equity - sum(kept.values())) / engine_equity if engine_equity > 0 else 0.0
@@ -255,5 +256,6 @@ if __name__ == "__main__":
     from . import data, news_brake, service
     os.environ["HL_MODE"] = "dry-run"
     candles, live_c = data.refresh_all()
-    result = sync(engine.prepare(candles), candles, live_c, service.SAFETY, news_brake.brake_days())
+    result = sync(engine.prepare(candles), candles, live_c, service.SAFETY, news_brake.brake_days(),
+                  data.refresh_hourly(engine.TRADEABLE))
     json.dump(result, sys.stdout, indent=1, default=str)

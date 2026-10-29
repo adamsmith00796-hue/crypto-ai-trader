@@ -23,6 +23,10 @@ CLOSE_STOP = True
 # (best seen-data pick, 3-day cooldown + pause after 3 stops in 14 days, made +134% vs +188% unseen).
 COOLDOWN_DAYS = 0      # after selling a coin, wait this many days before buying it again (0 = off)
 STOP_GUARD = (0, 0)    # (stops, days): after this many stop-outs within this many days, pause new buys (0 = off)
+# Buy the hour a coin's dots turn green during the day (needs hourly candles), not only after a green
+# daily close. Added 30 Oct 2026 at Adam's request: on 2 years of hourly data it made about the same
+# ($2,269 vs $2,298 per $1,000) with a similar worst drop, so it is neutral, but it catches days like HYPE +17%.
+INTRADAY_BUYS = True
 ATR_MULT = 2.5  # trailing stop distance in average daily ranges (ATR); was 3.0 until 11 Oct 2026
 DISASTER = 0.20  # 20%: never triggered on 2021-26 history (free insurance); 10% would have cost ~16%
 TRADEABLE = ["BTC", "ETH", "SOL", "ZEC", "NEAR", "HYPE", "ENA", "PUMP", "XPL", "PENGU"]
@@ -70,13 +74,36 @@ def _day(iso_ms: int) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(iso_ms / 1000))
 
 
+def live_green(v: dict, k: int, hours: list[list[float]]) -> bool:
+    """Would day k be a buy if it closed at the latest hourly price? v = one coin's prepared data,
+    k = index of the day being formed, hours = that day's hourly candles so far. Trend, Momentum and
+    Breakout use today's price; Weekly, Big coin and the Bitcoin weather come from yesterday's close."""
+    if k < 120 or not hours:
+        return False
+    prev = v["sig"][k - 1]
+    if not prev or not (prev["weekly"] and prev["big"] and prev.get("btc_regime", True)):
+        return False
+    rows, px = v["rows"], hours[-1][4]
+    if not px > (sum(r[4] for r in rows[k - 99:k]) + px) / 100 or not px > rows[k - 28][4]:
+        return False
+    hi_t, lo_t = max(h[2] for h in hours), min(h[3] for h in hours)
+    halves = 0
+    for n in (20, 55, 100):
+        w = rows[k - n + 1:k]
+        halves += px > (max([r[2] for r in w] + [hi_t]) + min([r[3] for r in w] + [lo_t])) / 2
+    return halves >= 2
+
+
 def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict | None = None,
-               halt_ms: int | None = None, no_buy_days: set[int] | None = None) -> dict:
+               halt_ms: int | None = None, no_buy_days: set[int] | None = None,
+               hourly: dict | None = None) -> dict:
     """Replay closed days from start_ms. The first decision is taken at the close of the day
     before start_ms. If `live` holds today's still-forming candles ({coin: row}), today's
     fills happen at its open and positions are valued at the current price.
     halt_ms: from this day's close, sell everything and stop (safety switch).
-    no_buy_days: days whose close makes no new buys (news brake); sells and stops still work."""
+    no_buy_days: days whose close makes no new buys (news brake); sells and stops still work.
+    hourly: {coin: {day_ms: [hourly candles]}}. On days it covers, a coin is also bought the hour its
+    dots turn green during the day (INTRADAY_BUYS), not only at the next open after a green close."""
     info, K = prep["coins"], sleeve["slots"]
     allowed = sleeve["coins"]
     days = [t for t in prep["days"] if t >= start_ms]
@@ -121,6 +148,30 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
                     pos[c] = {"units": slot * (1 - COST) / o, "cost": slot, "entry": o, "t": t, "high": o,
                               "stop": stop, "stop0": stop, "last": o}
 
+    def intraday_buys(t: int, k_of) -> None:
+        """Buy, hour by hour through day t, any coin whose dots turn green before the close."""
+        nonlocal cash
+        if not hourly or (halt_ms is not None and t >= halt_ms) or (no_buy_days and t in no_buy_days):
+            return
+        coins = [c for c in (allowed or info) if c in info and t in hourly.get(c, {})]
+        for h in range(max((len(hourly[c][t]) for c in coins), default=0)):
+            free = K - len(pos)
+            if free <= 0:
+                return
+            cands = []
+            for c in coins:
+                hrs, k = hourly[c][t][:h + 1], k_of(c)
+                if c not in pos and k is not None and len(hrs) == h + 1 and live_green(info[c], k, hrs):
+                    cands.append((info[c]["sig"][k - 1]["strength"], c, hrs[-1][4], info[c]["sig"][k - 1]["atr"]))
+            for _, c, px, atr in sorted(cands, reverse=True)[:free]:
+                equity = cash + sum(p["units"] * p["last"] for p in pos.values())
+                slot = min(cash, equity / K)
+                if slot > MIN_ORDER:
+                    cash -= slot
+                    stop = px - ATR_MULT * atr
+                    pos[c] = {"units": slot * (1 - COST) / px, "cost": slot, "entry": px, "t": t, "high": px,
+                              "stop": stop, "stop0": stop, "last": px}
+
     def scan(t: int) -> list[tuple[str, str]]:
         """End-of-day decisions for the next open."""
         if halt_ms is not None and t >= halt_ms:
@@ -142,6 +193,8 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
     for t in days:
         bar = {c: v["rows"][v["idx"][t]] for c, v in info.items() if t in v["idx"]}
         fill(queue, t, bar, {c: sig(c, prev) for c in bar} if prev else {})
+        if INTRADAY_BUYS:
+            intraday_buys(t, lambda c: info[c]["idx"].get(t))
         # stops during the day, then trail them up from the close
         for c in list(pos):
             if c not in bar:
@@ -169,6 +222,8 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
         if t > prev and t >= start_ms:
             bar = {c: r for c, r in live.items() if r[0] == t and c in info}
             fill(queue, t, bar, {c: sig(c, prev) for c in bar})
+            if INTRADAY_BUYS:
+                intraday_buys(t, lambda c: len(info[c]["rows"]) if info[c]["rows"][-1][0] < t else None)
             queue = []
             for c in list(pos):
                 if c in bar:
@@ -206,11 +261,12 @@ def safety_trip(curve: list[tuple[int, float]], limit: float, from_ms: int = 0) 
 
 
 def run_account(prep: dict, start_ms: int, capital: float, live: dict | None = None,
-                safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | None = None) -> dict:
+                safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | None = None,
+                hourly: dict | None = None) -> dict:
     """Run both sleeves with their share of the capital and combine them. With `safety`, the whole
     account is sold and stopped the first time it falls that fraction below its peak."""
     def go(halt_ms: int | None) -> list[dict]:
-        return [run_sleeve(prep, s, start_ms, capital * s["share"], live, halt_ms, no_buy_days) for s in SLEEVES]
+        return [run_sleeve(prep, s, start_ms, capital * s["share"], live, halt_ms, no_buy_days, hourly) for s in SLEEVES]
     parts = go(None)
     halted = safety_trip(_combine(parts), safety, safety_from_ms) if safety else None
     if halted is not None:

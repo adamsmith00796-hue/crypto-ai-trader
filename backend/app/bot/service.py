@@ -219,7 +219,8 @@ async def _refresh_once() -> None:
     candles, live = await asyncio.to_thread(data.refresh_all)
     brake = await asyncio.to_thread(news_brake.check)
     state = await asyncio.to_thread(build, candles, live, brake)
-    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days())
+    hourly = await asyncio.to_thread(data.refresh_hourly, engine.TRADEABLE)
+    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days(), hourly)
     _state = state
     # Paper-account Telegram alerts stopped 18 Oct 2026 (confusing next to the real ones); LIVE alerts come from live.sync.
     # Breakout alerts and their sell signals were switched off on 10 Oct 2026 at Adam's request (trading
