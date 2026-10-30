@@ -167,7 +167,7 @@ def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
-def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int],
+def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int] | dict[int, int],
          hourly: dict | None = None) -> dict:
     """One pass: read the account, work out orders, place them (unless off / dry-run)."""
     cfg = settings()

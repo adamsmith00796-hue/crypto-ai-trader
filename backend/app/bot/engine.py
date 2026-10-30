@@ -95,13 +95,14 @@ def live_green(v: dict, k: int, hours: list[list[float]]) -> bool:
 
 
 def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict | None = None,
-               halt_ms: int | None = None, no_buy_days: set[int] | None = None,
+               halt_ms: int | None = None, no_buy_days: set[int] | dict[int, int] | None = None,
                hourly: dict | None = None) -> dict:
     """Replay closed days from start_ms. The first decision is taken at the close of the day
     before start_ms. If `live` holds today's still-forming candles ({coin: row}), today's
     fills happen at its open and positions are valued at the current price.
     halt_ms: from this day's close, sell everything and stop (safety switch).
-    no_buy_days: days whose close makes no new buys (news brake); sells and stops still work.
+    no_buy_days: days whose close makes no new buys (news brake); sells and stops still work. As a
+    dict {day: ms it switched on}, that day's hourly buys before the switch-on still stand.
     hourly: {coin: {day_ms: [hourly candles]}}. On days it covers, a coin is also bought the hour its
     dots turn green during the day (INTRADAY_BUYS), not only at the next open after a green close."""
     info, K = prep["coins"], sleeve["slots"]
@@ -151,12 +152,16 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
     def intraday_buys(t: int, k_of) -> None:
         """Buy, hour by hour through day t, any coin whose dots turn green before the close."""
         nonlocal cash
-        if not hourly or (halt_ms is not None and t >= halt_ms) or (no_buy_days and t in no_buy_days):
+        if not hourly or (halt_ms is not None and t >= halt_ms):
             return
+        # a news brake only stops buys from the hour it switched on, never undoes earlier ones
+        brake_ms = (no_buy_days.get(t, t) if isinstance(no_buy_days, dict) else t) if no_buy_days and t in no_buy_days else None
         coins = [c for c in (allowed or info) if c in info and t in hourly.get(c, {})]
         for h in range(max((len(hourly[c][t]) for c in coins), default=0)):
             free = K - len(pos)
             if free <= 0:
+                return
+            if brake_ms is not None and any(hourly[c][t][h][0] >= brake_ms for c in coins if len(hourly[c][t]) > h):
                 return
             cands = []
             for c in coins:
@@ -265,7 +270,7 @@ def safety_trip(curve: list[tuple[int, float]], limit: float, from_ms: int = 0) 
 
 
 def run_account(prep: dict, start_ms: int, capital: float, live: dict | None = None,
-                safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | None = None,
+                safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | dict[int, int] | None = None,
                 hourly: dict | None = None) -> dict:
     """Run both sleeves with their share of the capital and combine them. With `safety`, the whole
     account is sold and stopped the first time it falls that fraction below its peak."""

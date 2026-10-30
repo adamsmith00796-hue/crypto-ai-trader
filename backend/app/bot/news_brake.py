@@ -18,6 +18,9 @@ from ..news import get_news
 from .data import DATA_DIR
 
 BRAKE_FILE = DATA_DIR / "news_brake.json"
+# When each day's brake switched on. Without it the brake reached back to the start of its day and
+# undid that morning's hourly buys: on 30 Oct 2026 (AEDT) HYPE and ZEC were sold 2 hours after buying.
+BRAKE_TIMES_FILE = DATA_DIR / "news_brake_times.json"
 MIN_HEADLINES = 2
 DAY_MS = 86_400_000
 
@@ -41,8 +44,10 @@ def load() -> dict[str, list[str]]:
     return json.loads(BRAKE_FILE.read_text()) if BRAKE_FILE.exists() else {}
 
 
-def brake_days() -> set[int]:
-    return {int(k) for k in load()}
+def brake_days() -> dict[int, int]:
+    """{day_start_ms: ms the brake switched on}. Days from before the times were kept count from midnight."""
+    times = json.loads(BRAKE_TIMES_FILE.read_text()) if BRAKE_TIMES_FILE.exists() else {}
+    return {int(k): int(times.get(k, k)) for k in load()}
 
 
 def check() -> dict:
@@ -64,5 +69,8 @@ def check() -> dict:
         days[str(today)] = hits[:5]
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         BRAKE_FILE.write_text(json.dumps(days, indent=1))
+        times = json.loads(BRAKE_TIMES_FILE.read_text()) if BRAKE_TIMES_FILE.exists() else {}
+        times[str(today)] = int(time.time() * 1000)
+        BRAKE_TIMES_FILE.write_text(json.dumps(times, indent=1))
     on = str(today) in days
     return {"on": on, "headlines": days.get(str(today), hits[:5]), "crisis_headlines_24h": len(hits)}
