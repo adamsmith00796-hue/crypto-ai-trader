@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -43,6 +44,9 @@ MOON_SHARE = 0.2  # only to replay the old pot's open bets to their exit
 MOON_STOPPED_MS = 1791590400000  # 2026-10-10
 BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
 IDLE_CASH = 0.10  # ...unless over 10% of the account sits in cash the rules want invested: then top up
+# Real buys from this day on are fed back into the replay as facts (engine `entries`): 29 Oct 2026, the
+# day hourly buys went live. Before it, the account followed older rules the replay no longer runs.
+ENTRIES_FROM_MS = 1793232000000
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
 # Our coin name -> Hyperliquid spot token (Unit-bridged coins are prefixed with U)
@@ -68,10 +72,10 @@ def _day(ms: float) -> str:
 
 
 def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capital: float,
-             hourly: dict | None = None, **safety) -> tuple[dict[str, float], float, dict, set[str]]:
+             hourly: dict | None = None, entries: dict | None = None, **safety) -> tuple[dict[str, float], float, dict, set[str]]:
     """USD the main bot holds per coin right now, its own account value, its run (for the safety switch
     status), and the coins the retired moonshot pot still holds (kept as they are until they exit)."""
-    run = engine.run_account(prep, start_ms, capital, live_candles, hourly=hourly, **safety)
+    run = engine.run_account(prep, start_ms, capital, live_candles, hourly=hourly, entries=entries, **safety)
     moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles, no_new_after=MOON_STOPPED_MS)
     held: dict[str, float] = {}
     for p in run["positions"]:
@@ -148,6 +152,11 @@ class Account:
 
 def history(n: int = 12) -> list[dict]:
     """The last n filled real orders, newest first (from the order log)."""
+    return fills()[::-1][:n]
+
+
+def fills() -> list[dict]:
+    """Every filled real order, oldest first (from the order log)."""
     if not ORDER_LOG.exists():
         return []
     out = []
@@ -160,16 +169,43 @@ def history(n: int = 12) -> list[dict]:
         if r.get("ok") and o.get("network") == "live":
             out.append({"t": int(o["t"] * 1000), "side": o["side"], "coin": o["coin"],
                         "usd": r["size"] * r["price"], "size": r["size"], "price": r["price"]})
-    return out[::-1][:n]
+    return out
+
+
+def unexplained_sells(orders: list[dict], run: dict, buys: list[dict]) -> list[str]:
+    """Full sells the replay has no exit for: it holds nothing of the coin, yet no rule (trend, stop,
+    safety switch) closed the bot's last real buy of it. That means the replay changed its mind about
+    the past (a data gap, a changed coin list...), not that a rule fired, so the sale must not happen."""
+    if run["halted"]:
+        return []
+    last_buy = {b["coin"]: _day(b["t"]) for b in buys if b["side"] == "buy"}
+    exited = {}
+    for x in run["trades"]:
+        exited[x["coin"]] = max(exited.get(x["coin"], ""), x["exit_date"])
+    return [o["coin"] for o in orders if o["side"] == "sell" and o["all"]
+            and exited.get(o["coin"], "") < last_buy.get(o["coin"], "9999")]
 
 
 def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+_busy = threading.Lock()  # a refresh that timed out keeps running in its thread; never let two passes overlap
+
+
 def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int] | dict[int, int],
          hourly: dict | None = None) -> dict:
     """One pass: read the account, work out orders, place them (unless off / dry-run)."""
+    if not _busy.acquire(blocking=False):
+        return {"mode": settings()["mode"], "orders": [], "error": "Previous pass still running: skipped"}
+    try:
+        return _sync(prep, candles, live_candles, safety, no_buy_days, hourly)
+    finally:
+        _busy.release()
+
+
+def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int] | dict[int, int],
+          hourly: dict | None = None) -> dict:
     cfg = settings()
     mode = cfg["mode"]
     if mode not in ("dry-run", "testnet", "live"):
@@ -196,8 +232,13 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
                 STATE_FILE.write_text(json.dumps(state))
         out["started"] = _day(state["start_ms"])
 
+        done = fills()
+        entries: dict[str, list[int]] = {}
+        for f in done:
+            if f["side"] == "buy" and f["t"] >= ENTRIES_FROM_MS:
+                entries.setdefault(f["coin"], []).append(f["t"])
         targets, engine_equity, run, keep = _targets(prep, candles, live_candles, state["start_ms"], state["capital"],
-                                                     hourly=hourly, safety=safety, no_buy_days=no_buy_days,
+                                                     hourly=hourly, entries=entries, safety=safety, no_buy_days=no_buy_days,
                                                      safety_from_ms=state.get("safety_reset_ms", state["start_ms"]))
         kept = {c: holdings.get(c, 0.0) for c in keep}  # old moonshot bets: hold as they are
         scale = (equity - sum(kept.values())) / engine_equity if engine_equity > 0 else 0.0
@@ -206,6 +247,16 @@ def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_da
             targets_usd[c] = targets_usd.get(c, 0.0) + v
         out.update(targets=targets_usd, halted=run["halted"], history=history())
         orders = plan_orders(holdings, usdc, targets_usd)
+        if blocked := unexplained_sells(orders, run, done):
+            orders = [o for o in orders if not (o["side"] == "sell" and o["coin"] in blocked)]
+            out["error"] = f"Held back selling {', '.join(blocked)}: no exit rule fired (replay mismatch)"
+            if mode != "dry-run":
+                warned = _load(LEDGER_FILE, {})
+                key = f"{network}:{_day(time.time() * 1000)}:warn:{','.join(blocked)}"
+                if not warned.get(key):
+                    alerts.send(f"⚠️ Held back selling {', '.join(blocked)}: the rules didn't call for it. Claude needs to check.")
+                    warned[key] = {"done": True, "tries": 1}
+                    LEDGER_FILE.write_text(json.dumps(dict(list(warned.items())[-500:])))
         out["orders"] = orders
 
         if equity > MAX_ACCOUNT_USD:

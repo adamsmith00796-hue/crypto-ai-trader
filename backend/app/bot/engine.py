@@ -96,7 +96,7 @@ def live_green(v: dict, k: int, hours: list[list[float]]) -> bool:
 
 def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict | None = None,
                halt_ms: int | None = None, no_buy_days: set[int] | dict[int, int] | None = None,
-               hourly: dict | None = None) -> dict:
+               hourly: dict | None = None, entries: dict[str, list[int]] | None = None) -> dict:
     """Replay closed days from start_ms. The first decision is taken at the close of the day
     before start_ms. If `live` holds today's still-forming candles ({coin: row}), today's
     fills happen at its open and positions are valued at the current price.
@@ -104,7 +104,10 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
     no_buy_days: days whose close makes no new buys (news brake); sells and stops still work. As a
     dict {day: ms it switched on}, that day's hourly buys before the switch-on still stand.
     hourly: {coin: {day_ms: [hourly candles]}}. On days it covers, a coin is also bought the hour its
-    dots turn green during the day (INTRADAY_BUYS), not only at the next open after a green close."""
+    dots turn green during the day (INTRADAY_BUYS), not only at the next open after a green close.
+    entries: {coin: [ms]} of real buys the live account made. Each counts as bought that hour even if
+    the replay no longer sees the dots green then (the hour closed lower, a news brake came on later,
+    the coin list changed), so a buy that really happened can only end through a real exit rule."""
     info, K = prep["coins"], sleeve["slots"]
     allowed = sleeve["coins"]
     days = [t for t in prep["days"] if t >= start_ms]
@@ -161,14 +164,16 @@ def run_sleeve(prep: dict, sleeve: dict, start_ms: int, cash: float, live: dict 
             free = K - len(pos)
             if free <= 0:
                 return
-            if brake_ms is not None and any(hourly[c][t][h][0] >= brake_ms for c in coins if len(hourly[c][t]) > h):
-                return
+            braked = brake_ms is not None and any(hourly[c][t][h][0] >= brake_ms for c in coins if len(hourly[c][t]) > h)
             cands = []
             for c in coins:
                 hrs, k = hourly[c][t][:h + 1], k_of(c)
-                if c not in pos and k is not None and len(hrs) == h + 1 and live_green(info[c], k, hrs):
-                    cands.append((info[c]["sig"][k - 1]["strength"], c, hrs[-1][4], info[c]["sig"][k - 1]["atr"]))
-            for _, c, px, atr in sorted(cands, reverse=True)[:free]:
+                if c in pos or k is None or len(hrs) != h + 1 or not info[c]["sig"][k - 1]:
+                    continue
+                real = any(hrs[-1][0] <= e < hrs[-1][0] + 3_600_000 for e in (entries or {}).get(c, ()))
+                if real or (not braked and live_green(info[c], k, hrs)):
+                    cands.append((real, info[c]["sig"][k - 1]["strength"], c, hrs[-1][4], info[c]["sig"][k - 1]["atr"]))
+            for _, _, c, px, atr in sorted(cands, reverse=True)[:free]:  # real buys first, then strongest
                 equity = cash + sum(p["units"] * p["last"] for p in pos.values())
                 slot = min(cash, equity / K)
                 if slot > MIN_ORDER:
@@ -271,11 +276,11 @@ def safety_trip(curve: list[tuple[int, float]], limit: float, from_ms: int = 0) 
 
 def run_account(prep: dict, start_ms: int, capital: float, live: dict | None = None,
                 safety: float | None = None, safety_from_ms: int = 0, no_buy_days: set[int] | dict[int, int] | None = None,
-                hourly: dict | None = None) -> dict:
+                hourly: dict | None = None, entries: dict[str, list[int]] | None = None) -> dict:
     """Run both sleeves with their share of the capital and combine them. With `safety`, the whole
     account is sold and stopped the first time it falls that fraction below its peak."""
     def go(halt_ms: int | None) -> list[dict]:
-        return [run_sleeve(prep, s, start_ms, capital * s["share"], live, halt_ms, no_buy_days, hourly) for s in SLEEVES]
+        return [run_sleeve(prep, s, start_ms, capital * s["share"], live, halt_ms, no_buy_days, hourly, entries) for s in SLEEVES]
     parts = go(None)
     halted = safety_trip(_combine(parts), safety, safety_from_ms) if safety else None
     if halted is not None:
