@@ -44,9 +44,9 @@ MOON_SHARE = 0.2  # only to replay the old pot's open bets to their exit
 MOON_STOPPED_MS = 1791590400000  # 2026-10-10
 BAND = 0.3  # only adjust a coin when it is 30% away from where the rules want it (avoids churning fees)
 IDLE_CASH = 0.10  # ...unless over 10% of the account sits in cash the rules want invested: then top up
-# Real buys from this day on are fed back into the replay as facts (engine `entries`): 29 Oct 2026, the
-# day hourly buys went live. Before it, the account followed older rules the replay no longer runs.
-ENTRIES_FROM_MS = 1793232000000
+# Real buys from this day on are fed back into the replay as facts (engine `entries`): 2 Nov 2026, a
+# clean start. The HYPE and ZEC bought and wrongly sold on 29 Oct UTC stay closed, not bought back.
+ENTRIES_FROM_MS = 1793577600000
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
 # Our coin name -> Hyperliquid spot token (Unit-bridged coins are prefixed with U)

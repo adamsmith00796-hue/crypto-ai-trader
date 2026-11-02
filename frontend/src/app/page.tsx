@@ -108,6 +108,7 @@ function Body({ b }: { b: Ready }) {
   const t = b.backtest;
   return (
     <>
+      {b.waiting && <p className="rounded border border-white/10 px-3 py-2 text-[12px] text-white/80">{b.waiting}</p>}
       <LivePanel b={b} />
       <Panel title="Latest real trades" sub="Filled orders on Hyperliquid, newest first · you also get these on Telegram">
         <Activity b={b} />

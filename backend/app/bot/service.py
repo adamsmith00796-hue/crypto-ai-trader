@@ -12,7 +12,7 @@ import time
 import csv
 import io
 
-from . import alerts, bigposts, data, engine, holdings_watch, live as live_trading, moonshot, news_brake
+from . import alerts, bigposts, checkin, data, engine, holdings_watch, live as live_trading, moonshot, news_brake
 from .strategy import DOTS, REQUIRED, all_green, coin_signals, trend_broken
 
 CAPITAL = 800.0  # main six-dot bot; the real plan is $800 here + $200 moonshot
@@ -221,7 +221,9 @@ async def _refresh_once() -> None:
     state = await asyncio.to_thread(build, candles, live, brake)
     hourly = await asyncio.to_thread(data.refresh_hourly, engine.TRADEABLE)
     state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days(), hourly)
+    state["waiting"] = checkin.why_waiting(state)
     _state = state
+    await asyncio.to_thread(checkin.notify, state)
     # Paper-account Telegram alerts stopped 18 Oct 2026 (confusing next to the real ones); LIVE alerts come from live.sync.
     # Breakout alerts and their sell signals were switched off on 10 Oct 2026 at Adam's request (trading
     # them by hand wasn't working for him); the breakouts still show on the dashboard.
