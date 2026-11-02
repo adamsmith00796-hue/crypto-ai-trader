@@ -143,9 +143,13 @@ export type BotStatus =
         halted?: string | null;
         error?: string | null;
         history?: { t: number; side: "buy" | "sell"; coin: string; usd: number; size: number; price: number }[];
+        capital?: number;
+        day_start?: number;
+        positions?: { coin: string; paid: number; now: number; stop: number; value: number; pnl_pct: number }[];
       };
       market?: { btc_above_200: boolean };
       waiting?: string | null;
+      versus?: { live_pct: number; test_pct: number } | null;
       moonshot: {
         capital: number;
         start_date: string;

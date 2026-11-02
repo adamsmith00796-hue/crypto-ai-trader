@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Chakra_Petch } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 
@@ -13,9 +14,11 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+const display = Chakra_Petch({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display" });
+
 export const metadata: Metadata = {
   title: "Six-Dot Bot",
-  description: "Six-dot crypto trading bot, paper trading.",
+  description: "Six-Dot crypto trading bot, live on Hyperliquid.",
 };
 
 export default function RootLayout({
@@ -26,7 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${display.variable} antialiased`}
       >
         {children}
       </body>

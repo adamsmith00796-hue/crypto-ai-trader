@@ -4,13 +4,13 @@
 
 /* Always-dark neon terminal theme. Monospace everywhere, dense panels. */
 :root {
-  --bg: #04060b;
+  --bg: #05070d;
   --panel: #080c14;
-  --line: #172033;
-  --cyan: #37d6ff;
+  --line: #1e3048;
+  --cyan: #5ce1ff;
   --green: #2ee66b;
   --red: #ff4d5e;
-  --yellow: #f5c518;
+  --yellow: #ffb454;
 }
 
 html, body {
@@ -60,3 +60,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .marquee, .live-dot { animation: none; }
 }
+
+/* Futuristic control panel */
+.display { font-family: var(--font-display), var(--font-geist-mono), sans-serif; }
+.label { font-size: 11px; letter-spacing: 0.08em; color: #a9bbd3; text-transform: uppercase; }
+.card { border: 1px solid var(--line); background: rgba(8, 12, 20, 0.85); padding: 14px; scroll-margin-top: 12px; }
+.ring-lit { filter: drop-shadow(0 0 8px var(--cyan)); }
+.ring-ticks { transform-origin: 160px 160px; animation: ring-spin 90s linear infinite; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ring-ticks { animation: none; } }

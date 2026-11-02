@@ -2,9 +2,9 @@ import type { MarketCoin } from "./api";
 
 export const GREEN = "#2ee66b";
 export const RED = "#ff4d5e";
-export const YELLOW = "#f5c518";
+export const YELLOW = "#ffb454";
 export const BLUE = "#3d7bff";
-export const CYAN = "#37d6ff";
+export const CYAN = "#5ce1ff";
 
 export const usd = (n: number, dp = 0) =>
   "$" + n.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -14,7 +14,7 @@ export const price = (n: number) => (n >= 100 ? usd(n, 0) : n >= 1 ? usd(n, 2) :
 export const pct = (n: number | null | undefined, dp = 2) =>
   n == null ? "--" : `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
 
-export const tone = (n: number | null | undefined) => (n == null ? YELLOW : n >= 0 ? GREEN : RED);
+export const tone = (n: number | null | undefined) => (n == null ? YELLOW : n >= 0 ? CYAN : YELLOW);
 
 /** Hourly-ish returns (%) from a sparkline. */
 export function returns(series: number[]): number[] {

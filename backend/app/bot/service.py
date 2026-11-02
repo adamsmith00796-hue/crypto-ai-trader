@@ -105,15 +105,25 @@ def _health(paper: dict | None, bt: dict, hold_btc: list, bt_stats: dict) -> dic
 
 
 _prep: dict | None = None  # last prepared market data, reused by live trading
+_bt_curve: list = []  # the full backtest curve, to compare with the real account
+
+
+def _versus(live: dict) -> dict | None:
+    """Real account against the same rules on the same dates, since going live."""
+    pts = [v for t, v in _bt_curve if t >= live.get("start_ms", 10**15)]
+    if not pts or not live.get("capital") or live.get("equity") is None:
+        return None
+    return {"live_pct": (live["equity"] / live["capital"] - 1) * 100, "test_pct": (pts[-1] / pts[0] - 1) * 100}
 
 
 def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
-    global _prep
+    global _prep, _bt_curve
     prep = _prep = engine.prepare(candles)
     btc = prep["coins"]["BTC"]
     last_t = btc["rows"][-1][0]
 
     bt = engine.run_account(prep, BACKTEST_START_MS, CAPITAL)
+    _bt_curve = bt["curve"]
     hold_btc = engine.hold(prep, "BTC", BACKTEST_START_MS, CAPITAL)
     rule = _rule_200(prep, BACKTEST_START_MS, CAPITAL)
 
@@ -222,6 +232,7 @@ async def _refresh_once() -> None:
     hourly = await asyncio.to_thread(data.refresh_hourly, engine.TRADEABLE)
     state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days(), hourly)
     state["waiting"] = checkin.why_waiting(state)
+    state["versus"] = _versus(state["live"])
     _state = state
     await asyncio.to_thread(checkin.notify, state)
     # Paper-account Telegram alerts stopped 18 Oct 2026 (confusing next to the real ones); LIVE alerts come from live.sync.

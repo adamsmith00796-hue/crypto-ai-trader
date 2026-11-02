@@ -33,6 +33,7 @@ ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 STATE_FILE = DATA_DIR / "live.json"
 LEDGER_FILE = DATA_DIR / "live_ledger.json"
 ORDER_LOG = DATA_DIR / "live_orders.jsonl"
+EQUITY_FILE = DATA_DIR / "live_equity.json"  # account value at the first check of each UTC day
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
@@ -186,6 +187,18 @@ def unexplained_sells(orders: list[dict], run: dict, buys: list[dict]) -> list[s
             and exited.get(o["coin"], "") < last_buy.get(o["coin"], "9999")]
 
 
+def open_trades(run: dict, buys: list[dict], px: dict[str, float], holdings: dict[str, float]) -> list[dict]:
+    """The coins really held, for the dashboard: what was really paid, the price now and the rules' stop."""
+    paid = {b["coin"]: b["price"] for b in buys if b["side"] == "buy"}
+    out = []
+    for p in run["positions"]:
+        c = p["coin"]
+        if holdings.get(c, 0.0) >= MIN_ORDER_USD and c in paid and c in px:
+            out.append({"coin": c, "paid": paid[c], "now": px[c], "stop": p["stop"], "value": holdings[c],
+                        "pnl_pct": (px[c] / paid[c] - 1) * 100})
+    return out
+
+
 def _load(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
@@ -245,7 +258,15 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
         targets_usd = {c: v * scale for c, v in targets.items() if acct is None or c in px}
         for c, v in kept.items():
             targets_usd[c] = targets_usd.get(c, 0.0) + v
-        out.update(targets=targets_usd, halted=run["halted"], history=history())
+        out.update(targets=targets_usd, halted=run["halted"], history=history(), capital=state["capital"],
+                   start_ms=state["start_ms"], positions=open_trades(run, done, px, holdings))
+        if mode != "dry-run":
+            today_key = _day(time.time() * 1000)
+            days = _load(EQUITY_FILE, {})
+            if today_key not in days:
+                days[today_key] = equity
+                EQUITY_FILE.write_text(json.dumps(dict(sorted(days.items())[-400:])))
+            out["day_start"] = days[today_key]
         orders = plan_orders(holdings, usdc, targets_usd)
         if blocked := unexplained_sells(orders, run, done):
             orders = [o for o in orders if not (o["side"] == "sell" and o["coin"] in blocked)]
@@ -294,7 +315,8 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
         usdc, amounts = acct.balances()
         px = acct.prices()
         holdings = {c: a * px.get(c, 0.0) for c, a in amounts.items()}
-        out.update(usdc=usdc, holdings=holdings, equity=usdc + sum(holdings.values()))
+        out.update(usdc=usdc, holdings=holdings, equity=usdc + sum(holdings.values()),
+                   positions=open_trades(run, fills(), px, holdings))
     except Exception as e:  # never let the live side take the paper bot down
         log.warning("live sync failed: %s", type(e).__name__)
         out["error"] = f"{type(e).__name__}: {e}"[:300]
