@@ -59,13 +59,13 @@ export function Orb({ coins, total, size, labels = true }: { coins: OrbCoin[]; t
       glowCanvas.width = glowCanvas.height = 128;
       const g = glowCanvas.getContext("2d")!;
       const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-      grad.addColorStop(0, "rgba(92,225,255,0.55)");
+      grad.addColorStop(0, "rgba(92,225,255,0.22)");
       grad.addColorStop(1, "rgba(92,225,255,0)");
       g.fillStyle = grad;
       g.fillRect(0, 0, 128, 128);
       const glowTex = new THREE.CanvasTexture(glowCanvas);
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-      glow.scale.set(5, 5, 1);
+      glow.scale.set(3.6, 3.6, 1);
       scene.add(glow);
 
       // each coin on its own tilted orbit

@@ -194,13 +194,13 @@ function Terminal({ b }: { b: Ready }) {
         .sort((x, y) => x.t - y.t);
     });
   }, [b]);
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [lines]);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines]);  // the log, never the page
   const stamp = (t: number) => new Date(t).toISOString().slice(5, 16).replace("T", " ");
   return (
     <Card>
       <p className="label pb-2">Bot log</p>
-      <div className="h-[260px] overflow-y-auto font-mono text-[12px] leading-relaxed">
+      <div ref={box} className="h-[260px] overflow-y-auto font-mono text-[12px] leading-relaxed">
         {lines.map((x, i) => (
           <div key={i} className="flex gap-3">
             <span className="shrink-0 tabular-nums text-[#6c7f97]">{stamp(x.t)}</span>
@@ -215,7 +215,7 @@ function Terminal({ b }: { b: Ready }) {
             <span className="text-[#cfe3f5]">{b.waiting}</span>
           </div>
         )}
-        <div ref={end} className="mt-1 h-4 w-2 animate-pulse bg-[var(--cyan)]" />
+        <div className="mt-1 h-4 w-2 animate-pulse bg-[var(--cyan)]" />
       </div>
     </Card>
   );
