@@ -151,7 +151,7 @@ def refresh_hourly(coins: list[str]) -> dict[str, dict[int, list[list[float]]]]:
                         if len(b) < 1000:
                             break
                         start = b[-1][0] + 1
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ValueError, KeyError):
                 pass  # keep what we have; the coin just misses intraday checks this round
             rows = sorted({r[0]: r for r in rows}.values())
             path.write_text(json.dumps(rows))

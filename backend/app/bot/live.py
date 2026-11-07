@@ -37,7 +37,10 @@ EQUITY_FILE = DATA_DIR / "live_equity.json"  # account value at the first check 
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
-PRICE_CHECK = 0.03  # skip an order when Binance (signals) and Hyperliquid (trades) disagree by more than this
+PRICE_CHECK = 0.03  # hold a BUY when Binance (signals) and Hyperliquid (trades) disagree by more than this
+FALLBACK_STOP = 0.20  # a real position the replay lost track of is still sold if it falls this far below its buy price
+TIMEOUT = 15  # seconds per Hyperliquid request; without it one hung connection stops all trading
+STALL_SECONDS = 600  # a pass running this long means trading has stalled: alert
 # Moonshot pot retired 10 Oct 2026: small-coin breakouts lost money on unseen 2024+ data in every version
 # tested (-63% to -79%) while the main bot made +174%. It makes no new buys from MOON_STOPPED_MS; bets
 # it already holds (PUMP) are kept at their current size until the moonshot sell rules exit them, at Adam's
@@ -49,6 +52,7 @@ IDLE_CASH = 0.10  # ...unless over 10% of the account sits in cash the rules wan
 # Real buys from this day on are fed back into the replay as facts (engine `entries`): 2 Nov 2026, a
 # clean start. The HYPE and ZEC bought and wrongly sold on 29 Oct UTC stay closed, not bought back.
 ENTRIES_FROM_MS = 1793577600000
+SELL_ALL_TRIES = 12  # a full sell (exit or stop) keeps retrying through the day instead of giving up after 3
 MAX_TRIES = 3  # attempts per coin/side/day; a failed stop-loss sell is retried, not dropped
 URLS = {"testnet": "https://api.hyperliquid-testnet.xyz", "live": "https://api.hyperliquid.xyz"}
 # Our coin name -> Hyperliquid spot token (Unit-bridged coins are prefixed with U)
@@ -74,16 +78,16 @@ def _day(ms: float) -> str:
 
 
 def _targets(prep: dict, candles: dict, live_candles: dict, start_ms: int, capital: float,
-             hourly: dict | None = None, entries: dict | None = None, **safety) -> tuple[dict[str, float], float, dict, set[str]]:
+             hourly: dict | None = None, entries: dict | None = None, **safety) -> tuple[dict[str, float], float, dict, dict]:
     """USD the main bot holds per coin right now, its own account value, its run (for the safety switch
-    status), and the coins the retired moonshot pot still holds (kept as they are until they exit)."""
+    status), and the retired moonshot pot's run (its open bets are kept as they are until they exit)."""
     run = engine.run_account(prep, start_ms, capital, live_candles, hourly=hourly, entries=entries, **safety)
     moon = moonshot.run(candles, start_ms, capital * MOON_SHARE, live_candles, no_new_after=MOON_STOPPED_MS)
     held: dict[str, float] = {}
     for p in run["positions"]:
         held[p["coin"]] = held.get(p["coin"], 0.0) + p["value"]
     equity = run["curve"][-1][1] if run["curve"] else capital
-    return held, equity, run, {p["coin"] for p in moon["positions"]}
+    return held, equity, run, moon
 
 
 def plan_orders(holdings_usd: dict[str, float], usdc: float, targets_usd: dict[str, float]) -> list[dict]:
@@ -117,8 +121,8 @@ class Account:
         from hyperliquid.exchange import Exchange
         from hyperliquid.info import Info
         self.address = address
-        self.info = Info(URLS[network], skip_ws=True)
-        self.exchange = Exchange(EthAccount.from_key(key), URLS[network], account_address=address) if key else None
+        self.info = Info(URLS[network], skip_ws=True, timeout=TIMEOUT)
+        self.exchange = Exchange(EthAccount.from_key(key), URLS[network], account_address=address, timeout=TIMEOUT) if key else None
 
     def pair(self, coin: str) -> str | None:
         name = f"{TOKENS[coin]}/USDC"
@@ -176,11 +180,12 @@ def fills() -> list[dict]:
 
 def price_mismatch(orders: list[dict], px: dict[str, float], live_candles: dict) -> dict[str, tuple[float, float]]:
     """Coins whose order should wait because the price the rules saw (Binance) and the price it would trade at
-    (Hyperliquid) disagree by more than PRICE_CHECK: one of the two feeds has a bad tick. {coin: (binance, hl)}."""
+    (Hyperliquid) disagree by more than PRICE_CHECK: one of the two feeds has a bad tick. {coin: (binance, hl)}.
+    Buys only: a sell must never be held up by a price gap (a lasting gap on a thin coin would block its stop)."""
     out = {}
     for o in orders:
         c = o["coin"]
-        if c in HL_ONLY or c not in live_candles or c not in px:  # HYPE's signals already come from Hyperliquid
+        if o["side"] != "buy" or c in HL_ONLY or c not in live_candles or c not in px:  # HYPE's signals already come from Hyperliquid
             continue
         seen, trade = live_candles[c][4], px[c]
         if seen > 0 and abs(trade / seen - 1) > PRICE_CHECK:
@@ -198,18 +203,36 @@ def _warn_once(network: str, what: str, text: str) -> None:
         LEDGER_FILE.write_text(json.dumps(dict(list(warned.items())[-500:])))
 
 
-def unexplained_sells(orders: list[dict], run: dict, buys: list[dict]) -> list[str]:
+def bad_tick_sells(orders: list[dict], run: dict, px: dict[str, float]) -> list[str]:
+    """Full sells from today's disaster stop where Hyperliquid's price is well above the crash level the
+    replay sold at: the crash was probably one bad Binance tick. They wait; the daily-close stop still works."""
+    today = _day(time.time() * 1000)
+    crash = {x["coin"]: x["exit_price"] for x in run["trades"] if x["exit_date"] == today and x["reason"] == "Disaster stop"}
+    return [o["coin"] for o in orders if o["side"] == "sell" and o["all"] and o["coin"] in crash
+            and o["coin"] in px and px[o["coin"]] > crash[o["coin"]] * 1.10]
+
+
+def unexplained_sells(orders: list[dict], run: dict, buys: list[dict], moon: dict | None = None,
+                      px: dict[str, float] | None = None) -> list[str]:
     """Full sells the replay has no exit for: it holds nothing of the coin, yet no rule (trend, stop,
     safety switch) closed the bot's last real buy of it. That means the replay changed its mind about
     the past (a data gap, a changed coin list...), not that a rule fired, so the sale must not happen."""
     if run["halted"]:
         return []
     last_buy = {b["coin"]: _day(b["t"]) for b in buys if b["side"] == "buy"}
+    paid = {b["coin"]: b["price"] for b in buys if b["side"] == "buy"}
     exited = {}
-    for x in run["trades"]:
+    for x in run["trades"] + (moon or {}).get("trades", []):
         exited[x["coin"]] = max(exited.get(x["coin"], ""), x["exit_date"])
-    return [o["coin"] for o in orders if o["side"] == "sell" and o["all"]
-            and exited.get(o["coin"], "") < last_buy.get(o["coin"], "9999")]
+    out = []
+    for o in orders:
+        c = o["coin"]
+        if o["side"] != "sell" or not o["all"] or exited.get(c, "") >= last_buy.get(c, ""):  # no recorded buy: nothing to protect
+            continue
+        if px and c in paid and px[c] <= paid[c] * (1 - FALLBACK_STOP):
+            continue  # the replay lost this position, so it has no stop of its own: fall back to a hard one
+        out.append(c)
+    return out
 
 
 def open_trades(run: dict, buys: list[dict], px: dict[str, float], holdings: dict[str, float]) -> list[dict]:
@@ -229,13 +252,21 @@ def _load(path: Path, default):
 
 
 _busy = threading.Lock()  # a refresh that timed out keeps running in its thread; never let two passes overlap
+_busy_since = 0.0
 
 
 def sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_days: set[int] | dict[int, int],
          hourly: dict | None = None) -> dict:
     """One pass: read the account, work out orders, place them (unless off / dry-run)."""
+    global _busy_since
     if not _busy.acquire(blocking=False):
+        stuck = time.time() - _busy_since
+        if stuck > STALL_SECONDS:
+            _warn_once("live", "stalled", f"🚨 Trading has stalled: one pass has been running for {stuck / 60:.0f} minutes. "
+                                          "No buys, sells or stops until it clears. Claude needs to check the server.")
+            return {"mode": settings()["mode"], "orders": [], "error": f"TRADING STALLED for {stuck / 60:.0f} min"}
         return {"mode": settings()["mode"], "orders": [], "error": "Previous pass still running: skipped"}
+    _busy_since = time.time()
     try:
         return _sync(prep, candles, live_candles, safety, no_buy_days, hourly)
     finally:
@@ -275,10 +306,10 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
         for f in done:
             if f["side"] == "buy" and f["t"] >= ENTRIES_FROM_MS:
                 entries.setdefault(f["coin"], []).append(f["t"])
-        targets, engine_equity, run, keep = _targets(prep, candles, live_candles, state["start_ms"], state["capital"],
+        targets, engine_equity, run, moon = _targets(prep, candles, live_candles, state["start_ms"], state["capital"],
                                                      hourly=hourly, entries=entries, safety=safety, no_buy_days=no_buy_days,
                                                      safety_from_ms=state.get("safety_reset_ms", state["start_ms"]))
-        kept = {c: holdings.get(c, 0.0) for c in keep}  # old moonshot bets: hold as they are
+        kept = {p["coin"]: holdings.get(p["coin"], 0.0) for p in moon["positions"]}  # old moonshot bets: hold as they are
         scale = (equity - sum(kept.values())) / engine_equity if engine_equity > 0 else 0.0
         targets_usd = {c: v * scale for c, v in targets.items() if acct is None or c in px}
         for c, v in kept.items():
@@ -292,20 +323,34 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
                 days[today_key] = equity
                 EQUITY_FILE.write_text(json.dumps(dict(sorted(days.items())[-400:])))
             out["day_start"] = days[today_key]
-        orders = plan_orders(holdings, usdc, targets_usd)
-        if blocked := unexplained_sells(orders, run, done):
-            orders = [o for o in orders if not (o["side"] == "sell" and o["coin"] in blocked)]
-            out["error"] = f"Held back selling {', '.join(blocked)}: no exit rule fired (replay mismatch)"
-            if mode != "dry-run":
-                _warn_once(network, ",".join(blocked),
-                           f"⚠️ Held back selling {', '.join(blocked)}: the rules didn't call for it. Claude needs to check.")
-        if odd := price_mismatch(orders, px, live_candles):
-            orders = [o for o in orders if o["coin"] not in odd]
-            detail = ", ".join(f"{c} Binance ${b:,.4g} vs Hyperliquid ${h:,.4g}" for c, (b, h) in odd.items())
-            out["error"] = f"Waiting on {', '.join(odd)}: prices disagree ({detail})"
-            if mode != "dry-run":
-                _warn_once(network, "price:" + ",".join(odd),
-                           f"⚠️ Order held: prices disagree by over {PRICE_CHECK:.0%} ({detail}). It retries every 5 minutes.")
+        problems = []
+        for _ in range(3):  # anything held back keeps its current holding, then plan again so buys aren't funded by it
+            orders = plan_orders(holdings, usdc, targets_usd)
+            blocked = unexplained_sells(orders, run, done, moon, px)
+            wick = bad_tick_sells(orders, run, px)
+            odd = price_mismatch(orders, px, live_candles)
+            if not (blocked or wick or odd):
+                break
+            for c in [*blocked, *wick, *odd]:
+                targets_usd[c] = holdings.get(c, 0.0)
+            if blocked:
+                problems.append(f"Held back selling {', '.join(blocked)}: no exit rule fired (replay mismatch)")
+                if mode != "dry-run":
+                    _warn_once(network, ",".join(blocked), f"⚠️ Held back selling {', '.join(blocked)}: the rules didn't call "
+                               f"for it. Only a {FALLBACK_STOP:.0%} drop below its buy price will sell it now. Claude needs to check.")
+            if wick:
+                problems.append(f"Held a disaster-stop sale of {', '.join(wick)}: Hyperliquid's price never crashed")
+                if mode != "dry-run":
+                    _warn_once(network, "wick:" + ",".join(wick), f"⚠️ Disaster stop on {', '.join(wick)} looks like a bad price "
+                               "tick (Hyperliquid's price is fine). Holding; the daily-close stop still applies.")
+            if odd:
+                detail = ", ".join(f"{c} Binance ${b:,.4g} vs Hyperliquid ${h:,.4g}" for c, (b, h) in odd.items())
+                problems.append(f"Waiting to buy {', '.join(odd)}: prices disagree ({detail})")
+                if mode != "dry-run":
+                    _warn_once(network, "price:" + ",".join(odd), f"⚠️ Buy held: prices disagree by over {PRICE_CHECK:.0%} "
+                               f"({detail}). It retries every 5 minutes.")
+        if problems:
+            out["error"] = " · ".join(dict.fromkeys(problems))
         out["orders"] = orders
 
         if equity > MAX_ACCOUNT_USD:
@@ -320,9 +365,11 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
         today = _day(time.time() * 1000)
         ledger = _load(LEDGER_FILE, {})  # {"network:day:coin:side": {"done": bool, "tries": n}}
         for o in orders:
-            key = f"{network}:{today}:{o['coin']}:{o['side']}"
+            sell_all = o["side"] == "sell" and o["all"]
+            key = f"{network}:{today}:{o['coin']}:{'sell_all' if sell_all else o['side']}"
             entry = ledger.get(key, {"done": False, "tries": 0})
-            if entry["done"] or entry["tries"] >= MAX_TRIES:
+            # a full sell is never "done": once it fills the coin is gone and isn't planned again, and a part fill sells the rest
+            if (entry["done"] and not sell_all) or entry["tries"] >= (SELL_ALL_TRIES if sell_all else MAX_TRIES):
                 o["result"] = {"ok": False, "error": "already done today" if entry["done"] else "gave up for today"}
                 continue
             price = px[o["coin"]]
@@ -334,7 +381,8 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
                             f"{r['size']:g} at ${r['price']:,.4g} = ${r['size'] * r['price']:,.2f}")
             entry = {"done": r["ok"], "tries": entry["tries"] + 1}
             if not r["ok"]:
-                alerts.send(f"⚠️ {label} order FAILED ({entry['tries']}/{MAX_TRIES}): {o['side']} {o['coin']}\n{r['error']}")
+                alerts.send(f"⚠️ {label} order FAILED ({entry['tries']}/{SELL_ALL_TRIES if sell_all else MAX_TRIES}): "
+                            f"{o['side']} {o['coin']}\n{r['error']}")
             ledger[key] = entry
             LEDGER_FILE.write_text(json.dumps(dict(list(ledger.items())[-500:])))
             with ORDER_LOG.open("a") as f:

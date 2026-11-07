@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 
 from . import alerts
@@ -62,9 +63,10 @@ def notify(state: dict) -> None:
         sent = json.loads(CHECKIN_FILE.read_text()) if CHECKIN_FILE.exists() else {}
         changed = False
         error = (state.get("live") or {}).get("error")
-        if error and sent.get("error") != f"{today}:{error}":
+        same = re.sub(r"[\d.,$]+", "#", error or "")  # prices in the text change every pass: same problem, one message
+        if error and sent.get("error") != f"{today}:{same}":
             alerts.send(f"⚠️ Trading bot problem: {error}")
-            sent["error"] = f"{today}:{error}"
+            sent["error"] = f"{today}:{same}"
             changed = True
         if now.hour >= CHECKIN_HOUR and sent.get("day") != today:
             alerts.send(message(state))
