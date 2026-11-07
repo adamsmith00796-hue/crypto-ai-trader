@@ -54,7 +54,7 @@ export function Field({ coins, total, height = 560 }: { coins: FieldCoin[]; tota
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const t = (now - t0) / 1000;
-      const cx = w / 2, cy = h / 2, R = Math.min(w * 0.42, h * 0.6);
+      const cx = w / 2, cy = h / 2, R = Math.min(w * 0.34, h * 0.52);
       const tilt = 0.42 + Math.sin(t * 0.07) * 0.06, spin = t * 0.05;
       ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = "rgba(5,7,13,0.13)"; // fade old trails
