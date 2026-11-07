@@ -34,14 +34,16 @@ export function Field({ coins, total, height = 560 }: { coins: FieldCoin[]; tota
     const n = coins.length || 1;
     const sector = (Math.PI * 2) / n;
     const color = (c: FieldCoin) => (c.held ? [255, 180, 84] : c.green >= total - 1 ? [92, 225, 255] : c.green >= total - 2 ? [150, 200, 235] : [90, 115, 145]);
-    // particles: [coin index, angle, radius offset, height, speed, previous x, previous y]
+    // particles: [coin index, place along its sector, radius offset, height, flow speed, previous x, previous y].
+    // Sectors stay evenly spaced; a coin's energy shows as faster flow and a thicker, brighter band.
+    const span = sector * 0.92;
     const parts: number[][] = [];
     coins.forEach((c, i) => {
-      const count = 160 + c.green * 70 + (c.held ? 120 : 0);
+      const count = 260 + c.green * 110 + (c.held ? 150 : 0);
       for (let k = 0; k < count; k++) {
         const g = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5; // roughly bell-shaped
-        parts.push([i, i * sector + (Math.random() - 0.5) * sector * 1.3, g * (0.08 + c.green * 0.025),
-          (Math.random() - 0.5) * (0.2 + c.green * 0.05), 0.04 + c.green * 0.03 + Math.random() * 0.03, NaN, NaN]);
+        parts.push([i, Math.random() * span, g * (0.12 + c.green * 0.04),
+          (Math.random() - 0.5) * (0.3 + c.green * 0.08), 0.03 + c.green * 0.035 + Math.random() * 0.03, NaN, NaN]);
       }
     });
 
@@ -52,26 +54,27 @@ export function Field({ coins, total, height = 560 }: { coins: FieldCoin[]; tota
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const t = (now - t0) / 1000;
-      const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.36;
+      const cx = w / 2, cy = h / 2, R = Math.min(w * 0.42, h * 0.6);
       const tilt = 0.42 + Math.sin(t * 0.07) * 0.06, spin = t * 0.05;
       ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = "rgba(5,7,13,0.22)"; // fade old trails
+      ctx.fillStyle = "rgba(5,7,13,0.13)"; // fade old trails
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = "lighter";
       const project = (a: number, r: number, y: number) => {
         const x3 = Math.cos(a + spin) * r, z3 = Math.sin(a + spin) * r;
-        return [cx + x3 * R, cy + z3 * R * Math.cos(tilt) * 0.55 + y * R * 0.6, z3];
+        return [cx + x3 * R, cy + z3 * R * Math.cos(tilt) * 0.62 + y * R * 0.55, z3];
       };
       for (const p of parts) {
         const c = coins[p[0]];
-        if (!still) p[1] += p[4] * dt * (1 + Math.sin(t * 0.6 + p[0]) * 0.3);
-        const wobble = Math.sin(p[1] * 3 + t * 0.8 + p[0]) * 0.05;
-        const [x, y, z] = project(p[1], 1 + p[2] + wobble, p[3] + Math.sin(p[1] * 2 + t) * 0.04);
+        if (!still) p[1] = (p[1] + p[4] * dt * (1 + Math.sin(t * 0.6 + p[0]) * 0.3)) % span;
+        const a = p[0] * sector - span / 2 + p[1];
+        const wobble = Math.sin(a * 3 + t * 0.8 + p[0]) * 0.05;
+        const [x, y, z] = project(a, 1 + p[2] + wobble, p[3] + Math.sin(a * 2 + t) * 0.05);
         const [r, g, b] = color(c);
-        const alpha = (0.12 + (c.green / total) * 0.45 + (c.held ? 0.2 : 0)) * (0.55 + (z + 1) * 0.3);
+        const alpha = (0.22 + (c.green / total) * 0.55 + (c.held ? 0.2 : 0)) * (0.55 + (z + 1) * 0.3);
         if (!Number.isNaN(p[5]) && Math.abs(x - p[5]) < 40) {
           ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
-          ctx.lineWidth = 0.6 + (c.green / total) * 0.9;
+          ctx.lineWidth = 0.7 + (c.green / total) * 1.1;
           ctx.beginPath();
           ctx.moveTo(p[5], p[6]);
           ctx.lineTo(x, y);
@@ -80,11 +83,11 @@ export function Field({ coins, total, height = 560 }: { coins: FieldCoin[]; tota
         p[5] = x;
         p[6] = y;
       }
-      // labels ride just outside each sector, at its particles' average speed
+      // labels sit just outside the middle of each sector
       coins.forEach((c, i) => {
         const el = labelEls[i];
         if (!el) return;
-        const [x, y] = project(i * sector + (still ? 0 : t * (0.055 + c.green * 0.03)), 1.32, 0);
+        const [x, y] = project(i * sector, 1.38, 0);
         el.style.transform = `translate(${x - 20}px, ${y - 8}px)`;
       });
       if (!still) frame = requestAnimationFrame(draw);
