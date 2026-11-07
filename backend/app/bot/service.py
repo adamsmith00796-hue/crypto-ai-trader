@@ -165,6 +165,9 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
         })
     order = {"IN TRADE": 0, "SELL": 1, "BUY": 2, "READY": 3, "WATCHING": 4}
     scanner.sort(key=lambda x: (order[x["status"]], -x["green"], -x["strength"]))
+    # last 90 daily closes plus today's price, for the Command Centre charts
+    closes = {c: [[r[0], r[4]] for r in prep["coins"][c]["rows"][-90:]] + ([[live[c][0], live[c][4]]] if c in live else [])
+              for c in engine.TRADEABLE if c in prep["coins"]}
 
     return {
         "ready": True,
@@ -178,6 +181,7 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
         "cost_per_side_pct": engine.COST * 100,
         "exchange": engine.EXCHANGE,
         "scanner": scanner,
+        "closes": closes,
         "paper": {
             "start_date": engine._day(start),
             "started": paper is not None,

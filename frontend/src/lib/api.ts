@@ -148,6 +148,7 @@ export type BotStatus =
         positions?: { coin: string; paid: number; now: number; stop: number; value: number; pnl_pct: number }[];
       };
       market?: { btc_above_200: boolean };
+      closes?: Record<string, [number, number][]>;
       waiting?: string | null;
       versus?: { live_pct: number; test_pct: number } | null;
       moonshot: {

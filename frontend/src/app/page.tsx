@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { api, type BotStats, type BotStatus } from "@/lib/api";
+import { type ReactNode } from "react";
+import { type BotStats } from "@/lib/api";
+import { radarRows, useBot, type Ready } from "@/lib/useBot";
 import { CYAN, GREEN, RED, YELLOW, usd, pct, price, tone } from "@/lib/stats";
 import { Loading, Panel } from "@/components/Panel";
+import { Orb } from "@/components/Orb";
+import { SystemStatus } from "@/components/SystemStatus";
 
-const REFRESH_MS = 60_000;
-const STALE_MS = 30 * 60_000; // backend refreshes every 5 min, so 30 min without news = stopped
 const INK = "#a9bbd3";
-type Ready = Extract<BotStatus, { ready: true }>;
 
 const STATUS: Record<string, { label: string; color: string; hint: string }> = {
   "IN TRADE": { label: "IN TRADE", color: CYAN, hint: "The bot holds this coin" },
@@ -19,29 +19,16 @@ const STATUS: Record<string, { label: string; color: string; hint: string }> = {
 };
 
 export default function Home() {
-  const [bot, setBot] = useState<BotStatus | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      api.bot().then(
-        (b) => !cancelled && (setBot(b), setErr(null)),
-        (e) => !cancelled && setErr(String(e)),
-      );
-    load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
+  const { bot, err } = useBot();
 
   return (
     <div id="home" className="mx-auto max-w-[640px] space-y-3.5 px-4 pb-24 pt-5">
       <header className="flex items-center justify-between gap-3">
         <h1 className="display text-[20px] font-bold tracking-[2px]">SIX<span className="text-[var(--cyan)]">/</span>DOT</h1>
-        <SystemStatus bot={bot} err={err} />
+        <div className="flex items-center gap-2">
+          <a href="/command" className="hidden border border-[var(--cyan)] px-2.5 py-1.5 text-[11px] font-bold tracking-wider text-[var(--cyan)] hover:bg-[var(--cyan)] hover:text-black sm:inline-block">COMMAND CENTRE</a>
+          <SystemStatus bot={bot} err={err} />
+        </div>
       </header>
 
       {err && <p className="border border-[var(--yellow)] px-3 py-2 text-[12px] text-[var(--yellow)]">Can&apos;t reach the bot: {err}</p>}
@@ -69,27 +56,6 @@ export default function Home() {
   );
 }
 
-function SystemStatus({ bot, err }: { bot: BotStatus | null; err: string | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-  let color = YELLOW, label = "CONNECTING";
-  if (err || (bot?.ready && now - bot.updated_at * 1000 > STALE_MS)) {
-    [color, label] = [RED, "OFFLINE"];
-  } else if (bot?.ready && bot.live?.halted) {
-    [color, label] = [RED, "STOPPED"];
-  } else if (bot?.ready) {
-    const mins = Math.max(0, Math.round((now - bot.updated_at * 1000) / 60_000));
-    [color, label] = [CYAN, `ONLINE · ${mins ? `${mins} MIN AGO` : "JUST NOW"}`];
-  }
-  return (
-    <div role="status" aria-live="polite" className="flex items-center gap-2 border border-[var(--line)] px-2.5 py-1.5 text-[11px] text-[#a9bbd3]">
-      <span className="h-2 w-2 rounded-full" style={{ background: color, boxShadow: `0 0 10px ${color}` }} />{label}
-    </div>
-  );
-}
 
 function Body({ b }: { b: Ready }) {
   const t = b.backtest;
@@ -132,38 +98,21 @@ function Body({ b }: { b: Ready }) {
   );
 }
 
-/** The coin the ring shows: the first one held, else the closest to a buy. */
-function radarRows(b: Ready) {
-  const held = new Set(Object.entries(b.live?.holdings ?? {}).filter(([, v]) => v >= 10).map(([c]) => c));
-  return [...b.scanner]
-    .map((r) => ({ ...r, held: held.has(r.coin) }))
-    .sort((x, y) => Number(y.held) - Number(x.held) || y.green - x.green || y.strength - x.strength);
-}
-
 function Hero({ b }: { b: Ready }) {
   const l = b.live;
   const lead = radarRows(b)[0];
   const lit = lead?.green ?? 0;
   const total = b.dots.length;
-  const seg = (2 * Math.PI * 120) / total;
-  const dash = [seg - 8, 8];
-  const litDash = Array.from({ length: lit }, () => [seg - 8, 8]).flat().concat(lit < total ? [0, seg * (total - lit)] : []);
   const equity = l?.equity ?? 0;
   const today = l?.day_start != null ? equity - l.day_start : null;
   const since = l?.capital ? (equity / l.capital - 1) * 100 : null;
   const invested = Object.values(l?.holdings ?? {}).some((v) => v >= 10);
   return (
     <section className="relative mx-auto flex h-[320px] w-[320px] items-center justify-center">
-      <svg width="320" height="320" viewBox="0 0 320 320" aria-hidden="true" className="absolute inset-0">
-        <circle cx="160" cy="160" r="150" fill="none" stroke="#14243a" />
-        <circle cx="160" cy="160" r="140" fill="none" stroke="#1e3048" strokeWidth="6" strokeDasharray="1 7" className="ring-ticks" />
-        <circle cx="160" cy="160" r="120" fill="none" stroke="#1e3048" strokeWidth="10" strokeDasharray={dash.join(" ")} transform="rotate(-90 160 160)" />
-        {lit > 0 && <circle cx="160" cy="160" r="120" fill="none" stroke="var(--cyan)" strokeWidth="10" strokeDasharray={litDash.join(" ")} transform="rotate(-90 160 160)" className="ring-lit" />}
-        <circle cx="160" cy="160" r="102" fill="none" stroke="#14243a" />
-      </svg>
+      <div className="absolute inset-0 opacity-90"><Orb coins={radarRows(b).map((r) => ({ coin: r.coin, green: r.green, held: r.held }))} total={total} size={320} labels={false} /></div>
       <div className="relative flex flex-col items-center gap-1 text-center">
         <p className="label !tracking-[0.18em]">Account value</p>
-        <p className="display text-[42px] font-bold leading-tight tabular-nums">{usd(equity, 2)}</p>
+        <p className="display text-[42px] font-bold leading-tight tabular-nums [text-shadow:0_0_18px_#05070d,0_0_6px_#05070d]">{usd(equity, 2)}</p>
         <p className="text-[14px] font-bold tabular-nums" style={{ color: today != null && today < 0 ? YELLOW : today ? CYAN : INK }}>
           {today != null ? `${today < 0 ? "-" : "+"}${usd(Math.abs(today), 2)} TODAY` : invested ? "" : "ALL IN CASH"}
         </p>
