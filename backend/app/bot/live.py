@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 from . import alerts, engine, moonshot
-from .data import DATA_DIR
+from .data import DATA_DIR, HL_ONLY
 
 ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 STATE_FILE = DATA_DIR / "live.json"
@@ -37,6 +37,7 @@ EQUITY_FILE = DATA_DIR / "live_equity.json"  # account value at the first check 
 MAX_ACCOUNT_USD = 1000.0
 MIN_ORDER_USD = 10.0
 SLIPPAGE = 0.02
+PRICE_CHECK = 0.03  # skip an order when Binance (signals) and Hyperliquid (trades) disagree by more than this
 # Moonshot pot retired 10 Oct 2026: small-coin breakouts lost money on unseen 2024+ data in every version
 # tested (-63% to -79%) while the main bot made +174%. It makes no new buys from MOON_STOPPED_MS; bets
 # it already holds (PUMP) are kept at their current size until the moonshot sell rules exit them, at Adam's
@@ -173,6 +174,30 @@ def fills() -> list[dict]:
     return out
 
 
+def price_mismatch(orders: list[dict], px: dict[str, float], live_candles: dict) -> dict[str, tuple[float, float]]:
+    """Coins whose order should wait because the price the rules saw (Binance) and the price it would trade at
+    (Hyperliquid) disagree by more than PRICE_CHECK: one of the two feeds has a bad tick. {coin: (binance, hl)}."""
+    out = {}
+    for o in orders:
+        c = o["coin"]
+        if c in HL_ONLY or c not in live_candles or c not in px:  # HYPE's signals already come from Hyperliquid
+            continue
+        seen, trade = live_candles[c][4], px[c]
+        if seen > 0 and abs(trade / seen - 1) > PRICE_CHECK:
+            out[c] = (seen, trade)
+    return out
+
+
+def _warn_once(network: str, what: str, text: str) -> None:
+    """Telegram warning, at most once a day per distinct problem."""
+    warned = _load(LEDGER_FILE, {})
+    key = f"{network}:{_day(time.time() * 1000)}:warn:{what}"
+    if not warned.get(key):
+        alerts.send(text)
+        warned[key] = {"done": True, "tries": 1}
+        LEDGER_FILE.write_text(json.dumps(dict(list(warned.items())[-500:])))
+
+
 def unexplained_sells(orders: list[dict], run: dict, buys: list[dict]) -> list[str]:
     """Full sells the replay has no exit for: it holds nothing of the coin, yet no rule (trend, stop,
     safety switch) closed the bot's last real buy of it. That means the replay changed its mind about
@@ -272,12 +297,15 @@ def _sync(prep: dict, candles: dict, live_candles: dict, safety: float, no_buy_d
             orders = [o for o in orders if not (o["side"] == "sell" and o["coin"] in blocked)]
             out["error"] = f"Held back selling {', '.join(blocked)}: no exit rule fired (replay mismatch)"
             if mode != "dry-run":
-                warned = _load(LEDGER_FILE, {})
-                key = f"{network}:{_day(time.time() * 1000)}:warn:{','.join(blocked)}"
-                if not warned.get(key):
-                    alerts.send(f"⚠️ Held back selling {', '.join(blocked)}: the rules didn't call for it. Claude needs to check.")
-                    warned[key] = {"done": True, "tries": 1}
-                    LEDGER_FILE.write_text(json.dumps(dict(list(warned.items())[-500:])))
+                _warn_once(network, ",".join(blocked),
+                           f"⚠️ Held back selling {', '.join(blocked)}: the rules didn't call for it. Claude needs to check.")
+        if odd := price_mismatch(orders, px, live_candles):
+            orders = [o for o in orders if o["coin"] not in odd]
+            detail = ", ".join(f"{c} Binance ${b:,.4g} vs Hyperliquid ${h:,.4g}" for c, (b, h) in odd.items())
+            out["error"] = f"Waiting on {', '.join(odd)}: prices disagree ({detail})"
+            if mode != "dry-run":
+                _warn_once(network, "price:" + ",".join(odd),
+                           f"⚠️ Order held: prices disagree by over {PRICE_CHECK:.0%} ({detail}). It retries every 5 minutes.")
         out["orders"] = orders
 
         if equity > MAX_ACCOUNT_USD:
