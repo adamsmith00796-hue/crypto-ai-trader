@@ -166,13 +166,13 @@ def round_trips() -> list[dict]:
             p["size"] += f["size"]
             p["cost"] += f["usd"]
         elif p and p["size"] > 0:
-            share = min(1.0, f["size"] / p["size"])
+            share = 1.0 if f["all"] else min(1.0, f["size"] / p["size"])
             used = p["cost"] * share
             p["size"] -= p["size"] * share
             p["cost"] -= used
             p["spent"] += used
             p["got"] += f["usd"]
-            if share > 0.999:  # sold out: the trade is closed
+            if f["all"] or share > 0.999:  # sold out (fees are taken in coins, so a full sell is a little short)
                 out.append({"coin": c, "opened": p["t"], "closed": f["t"], "cost": p["spent"], "pnl": p["got"] - p["spent"],
                             "pnl_pct": (p["got"] / p["spent"] - 1) * 100 if p["spent"] else 0.0})
                 del held[c]
@@ -196,7 +196,7 @@ def fills() -> list[dict]:
             continue
         r = o.get("result") or {}
         if r.get("ok") and o.get("network") == "live":
-            out.append({"t": int(o["t"] * 1000), "side": o["side"], "coin": o["coin"],
+            out.append({"t": int(o["t"] * 1000), "side": o["side"], "coin": o["coin"], "all": bool(o.get("all")),
                         "usd": r["size"] * r["price"], "size": r["size"], "price": r["price"]})
     return out
 
