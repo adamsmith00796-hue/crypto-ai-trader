@@ -228,15 +228,62 @@ def build(candles: dict, live: dict, brake: dict | None = None) -> dict:
     }
 
 
+_STARTED = time.time()
+_checks: dict[str, int] = {}  # successful refreshes per UTC day, for the Command Centre
+
+
+def _pipeline(state: dict, took: dict[str, float]) -> list[dict]:
+    """What the bot did on this run, step by step, for the Command Centre's checklist."""
+    live = state.get("live") or {}
+    err = live.get("error") or ""
+    placed = [o for o in live.get("orders") or [] if (o.get("result") or {}).get("ok")]
+    brake = (state.get("news_brake") or {}).get("on")
+    weather = (state.get("market") or {}).get("btc_above_200")
+
+    def step(name, ms, status, note):
+        return {"step": name, "ms": round(ms), "status": status, "note": note}
+    return [
+        step("Prices", took["prices"], "DONE", f"{state.get('coins_scanned', 0)} coins"),
+        step("News brake", took["news"], "BLOCK" if brake else "DONE", "no new buys" if brake else "clear"),
+        step("Dots", took["dots"], "DONE", f"{sum(1 for x in state.get('scanner', []) if x['green'] == len(SHOWN))} on all {len(SHOWN)}"),
+        step("BTC weather", 0, "DONE" if weather is not False else "BLOCK", "above 200-day" if weather is not False else "below 200-day"),
+        step("Hourly", took["hourly"], "DONE", f"{len(engine.TRADEABLE)} coins"),
+        step("Cross-check", 0, "WAIT" if "prices disagree" in err else "DONE", "Binance vs Hyperliquid"),
+        step("Replay", took["sync"], "WAIT" if err else "DONE", "matches rules" if not err else "see note"),
+        step("Orders", 0, "DONE", f"{len(placed)} placed" if placed else "none needed"),
+    ]
+
+
 async def _refresh_once() -> None:
     global _state
-    candles, live = await asyncio.to_thread(data.refresh_all)
-    brake = await asyncio.to_thread(news_brake.check)
-    state = await asyncio.to_thread(build, candles, live, brake)
-    hourly = await asyncio.to_thread(data.refresh_hourly, engine.TRADEABLE)
-    state["live"] = await asyncio.to_thread(live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days(), hourly)
+    took: dict[str, float] = {}
+
+    async def timed(name, fn, *args):
+        t = time.perf_counter()
+        out = await asyncio.to_thread(fn, *args)
+        took[name] = (time.perf_counter() - t) * 1000
+        return out
+    candles, live = await timed("prices", data.refresh_all)
+    brake = await timed("news", news_brake.check)
+    state = await timed("dots", build, candles, live, brake)
+    hourly = await timed("hourly", data.refresh_hourly, engine.TRADEABLE)
+    state["live"] = await timed("sync", live_trading.sync, _prep, candles, live, SAFETY, news_brake.brake_days(), hourly)
     state["waiting"] = checkin.why_waiting(state)
     state["versus"] = _versus(state["live"])
+    day = engine._day(time.time() * 1000)
+    _checks[day] = _checks.get(day, 0) + 1
+    btc_h = [r for rows in (hourly.get("BTC") or {}).values() for r in rows][-48:]
+    btc_rows = _prep["coins"]["BTC"]["rows"] if _prep else []
+    state["command"] = {
+        "pipeline": _pipeline(state, took),
+        "run_ms": round(sum(took.values())),
+        "checks_today": _checks[day],
+        "uptime_s": round(time.time() - _STARTED),
+        "next_check_at": time.time() + REFRESH_SECONDS,
+        "btc_hourly": [[r[0], r[4]] for r in btc_h],
+        "btc_200d": sum(r[4] for r in btc_rows[-200:]) / 200 if len(btc_rows) >= 200 else None,
+        "round_trips": live_trading.round_trips(),
+    }
     _state = state
     await asyncio.to_thread(checkin.notify, state)
     # Paper-account Telegram alerts stopped 18 Oct 2026 (confusing next to the real ones); LIVE alerts come from live.sync.

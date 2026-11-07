@@ -156,6 +156,29 @@ class Account:
         return {"ok": False, "error": status.get("error") or str(resp)[:300]}
 
 
+def round_trips() -> list[dict]:
+    """Each real trade from first buy to final sell, with its profit or loss (average cost; part sells pro rata)."""
+    out, held = [], {}
+    for f in fills():
+        c, p = f["coin"], held.get(f["coin"])
+        if f["side"] == "buy":
+            p = held.setdefault(c, {"size": 0.0, "cost": 0.0, "spent": 0.0, "got": 0.0, "t": f["t"]})
+            p["size"] += f["size"]
+            p["cost"] += f["usd"]
+        elif p and p["size"] > 0:
+            share = min(1.0, f["size"] / p["size"])
+            used = p["cost"] * share
+            p["size"] -= p["size"] * share
+            p["cost"] -= used
+            p["spent"] += used
+            p["got"] += f["usd"]
+            if share > 0.999:  # sold out: the trade is closed
+                out.append({"coin": c, "opened": p["t"], "closed": f["t"], "cost": p["spent"], "pnl": p["got"] - p["spent"],
+                            "pnl_pct": (p["got"] / p["spent"] - 1) * 100 if p["spent"] else 0.0})
+                del held[c]
+    return out
+
+
 def history(n: int = 12) -> list[dict]:
     """The last n filled real orders, newest first (from the order log)."""
     return fills()[::-1][:n]

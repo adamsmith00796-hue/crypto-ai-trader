@@ -69,3 +69,6 @@ body {
 .ring-ticks { transform-origin: 160px 160px; animation: ring-spin 90s linear infinite; }
 @keyframes ring-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ring-ticks { animation: none; } }
+.ticker { animation: ticker 60s linear infinite; }
+@keyframes ticker { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .ticker { animation: none; } }

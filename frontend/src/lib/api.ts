@@ -149,6 +149,16 @@ export type BotStatus =
       };
       market?: { btc_above_200: boolean };
       closes?: Record<string, [number, number][]>;
+      command?: {
+        pipeline: { step: string; ms: number; status: "DONE" | "WAIT" | "BLOCK"; note: string }[];
+        run_ms: number;
+        checks_today: number;
+        uptime_s: number;
+        next_check_at: number;
+        btc_hourly: [number, number][];
+        btc_200d: number | null;
+        round_trips: { coin: string; opened: number; closed: number; cost: number; pnl: number; pnl_pct: number }[];
+      };
       waiting?: string | null;
       versus?: { live_pct: number; test_pct: number } | null;
       moonshot: {
